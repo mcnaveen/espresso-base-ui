@@ -21,6 +21,8 @@ import { cn } from "@/lib/utils"
 import type { DateRange } from "react-day-picker"
 import { addDays, format } from "date-fns"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
+import { DateRangePicker } from "@/components/ui/date-range-picker"
+import { DatePicker } from "@/components/ui/date-picker"
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-sm font-medium text-foreground">{children}</h2>
@@ -688,6 +690,12 @@ export default function CalendarPage() {
         </CalendarPopover>
       </div>
 
+      {/* Date Picker with Presets + Prev/Next */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Date Picker with Presets + Prev/Next</SectionTitle>
+        <DatePicker />
+      </div>
+
       {/* Presets */}
       <div className="flex flex-col gap-4">
         <SectionTitle>Presets</SectionTitle>
@@ -713,6 +721,17 @@ export default function CalendarPage() {
             />
           )}
         </CalendarPopover>
+      </div>
+
+      {/* Date Range Picker with Prev/Next */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Date Range Picker with Prev/Next</SectionTitle>
+        <DateRangePicker
+          defaultValue={{
+            from: new Date(2023, 4, 3),
+            to: new Date(2023, 4, 11),
+          }}
+        />
       </div>
 
       {/* Booked Dates */}
