@@ -569,6 +569,19 @@ function PresetsContent() {
   )
 }
 
+function ControlledDatePickerDemo() {
+  const [date, setDate] = useState<Date>(new Date(2023, 4, 3))
+
+  return (
+    <div className="flex items-center gap-3">
+      <DatePicker value={date} onValueChange={setDate} />
+      <p className="text-sm text-muted-foreground">
+        Selected: {format(date, "PPP")}
+      </p>
+    </div>
+  )
+}
+
 export default function CalendarPage() {
   const [singleDate, setSingleDate] = useState<Date | undefined>(new Date())
   const [multipleDates, setMultipleDates] = useState<Date[] | undefined>(
@@ -696,6 +709,12 @@ export default function CalendarPage() {
         <DatePicker />
       </div>
 
+      {/* Date Picker — Controlled */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Date Picker — Controlled</SectionTitle>
+        <ControlledDatePickerDemo />
+      </div>
+
       {/* Presets */}
       <div className="flex flex-col gap-4">
         <SectionTitle>Presets</SectionTitle>
@@ -732,6 +751,21 @@ export default function CalendarPage() {
             to: new Date(2023, 4, 11),
           }}
         />
+      </div>
+
+      {/* Date Range Picker — future booking */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Date Range Picker — future booking</SectionTitle>
+        <DateRangePicker
+          disableFuture={false}
+          defaultValue={{
+            from: new Date(),
+            to: addDays(new Date(), 6),
+          }}
+        />
+        <p className="text-sm text-muted-foreground">
+          Next isn&apos;t capped at today — useful for booking flows.
+        </p>
       </div>
 
       {/* Booked Dates */}

@@ -1,7 +1,15 @@
 "use client"
 
 import * as React from "react"
-import { Copy, Scissors, Clipboard, Trash2 } from "lucide-react"
+import {
+  Copy,
+  Scissors,
+  Clipboard,
+  Trash2,
+  Pencil,
+  Archive,
+  Download,
+} from "lucide-react"
 import {
   ContextMenu,
   ContextMenuCheckboxItem,
@@ -101,6 +109,57 @@ export default function ContextMenuPage() {
                 <ContextMenuItem>Inspect</ContextMenuItem>
               </ContextMenuSubContent>
             </ContextMenuSub>
+          </ContextMenuContent>
+        </ContextMenu>
+      </div>
+
+      {/* Disabled and inset items */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Disabled and inset items</SectionTitle>
+        <ContextMenu>
+          <ContextMenuTrigger className="flex h-32 w-64 items-center justify-center rounded-lg border border-dashed border-border text-sm text-muted-foreground">
+            Right click here
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem inset>Reload</ContextMenuItem>
+            <ContextMenuItem inset disabled>
+              Forward
+            </ContextMenuItem>
+            <ContextMenuItem inset>Save as...</ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem inset disabled>
+              Print...
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      </div>
+
+      {/* File row */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>File row</SectionTitle>
+        <ContextMenu>
+          <ContextMenuTrigger className="flex w-80 items-center justify-between rounded-lg border border-border px-3 py-2 text-sm">
+            <span className="text-foreground">quarterly-report.pdf</span>
+            <span className="text-xs text-muted-foreground">2.4 MB</span>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem>
+              <Pencil />
+              Rename
+            </ContextMenuItem>
+            <ContextMenuItem>
+              <Download />
+              Download
+            </ContextMenuItem>
+            <ContextMenuItem>
+              <Archive />
+              Archive
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive">
+              <Trash2 />
+              Move to trash
+            </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
       </div>

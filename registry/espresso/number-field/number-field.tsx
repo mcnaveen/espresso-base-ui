@@ -14,8 +14,8 @@ function NumberField({ ...props }: NumberFieldPrimitive.Root.Props) {
 const numberFieldGroupVariants = cva(
   [
     "flex w-fit items-center rounded-md bg-background shadow-[0px_1px_1px_#0000000f,0px_0px_0px_1px_#00000012] dark:shadow-[0px_1px_1px_rgba(0,0,0,0.08),0px_0px_0px_1px_rgba(255,255,255,0.1)]",
-    "has-data-disabled:pointer-events-none has-data-disabled:cursor-not-allowed has-data-disabled:bg-input has-data-disabled:text-popover-foreground",
-    "has-data-invalid:shadow-[0px_1px_1px_#0000000f,0px_0px_0px_1px_var(--error-outline)]!",
+    "has-[[data-slot=number-field-input][data-disabled]]:pointer-events-none has-[[data-slot=number-field-input][data-disabled]]:cursor-not-allowed has-[[data-slot=number-field-input][data-disabled]]:bg-input has-[[data-slot=number-field-input][data-disabled]]:text-popover-foreground",
+    "has-[[data-slot=number-field-input][data-invalid]]:shadow-[0px_1px_1px_#0000000f,0px_0px_0px_1px_var(--error-outline)]!",
   ],
   {
     variants: {
