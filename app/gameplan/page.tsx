@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  Menu,
   Bell,
   ChevronDown,
   ChevronRight,
@@ -124,6 +125,20 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { useIsMobileState } from "@/hooks/use-mobile"
+import {
+  MobileNav,
+  MobileNavItem,
+  MobileShell,
+  MobileShellContent,
+  MobileShellHeader,
+} from "@/components/ui/mobile-shell"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerHeader,
+  DrawerTitle,
+} from "@/components/ui/drawer"
 
 const tasks = [
   {
@@ -358,6 +373,12 @@ function GameplanSidebar() {
                       </div>
                       CRM Data Grid
                     </DropdownMenuItem>
+                    <DropdownMenuItem render={<a href="/crm-data-grid-base" />}>
+                      <div className="flex size-7 items-center justify-center rounded-md text-white">
+                        <img src="/images/svg/logo-crm.svg" alt="CRM" />
+                      </div>
+                      CRM Data Grid Base
+                    </DropdownMenuItem>
                     <DropdownMenuItem render={<a href="/helpdesk" />}>
                       <div className="flex size-7 items-center justify-center rounded-md text-white">
                         <img
@@ -577,6 +598,22 @@ function GameplanSidebar() {
   )
 }
 
+// Sidebar destinations shown in the mobile bottom-sheet menu.
+const mobileSidebarItems = [
+  { label: "Search", icon: Search },
+  { label: "Notifications", icon: Bell },
+  { label: "Inbox", icon: Inbox },
+  { label: "Home", icon: Home },
+  { label: "Drafts", icon: FileText },
+  { label: "Tasks", icon: ListTodo },
+  { label: "Pages", icon: BookOpen },
+]
+
+// The bottom nav surfaces the sidebar's first three destinations; the
+// drawer (opened from the nav's Menu tab) holds the rest.
+const mobileNavItems = mobileSidebarItems.slice(2, 5)
+const mobileDrawerItems = mobileSidebarItems.slice(5)
+
 export default function GameplanPage() {
   const [sorting, setSorting] = useState<SortingState>([])
 
@@ -590,208 +627,303 @@ export default function GameplanPage() {
     columnResizeMode: "onChange",
   })
 
+  // Below `md` the page renders in a MobileShell (bottom nav) instead of the
+  // sidebar layout — two navigation models, chosen by viewport.
+  const isMobile = useIsMobileState()
+  const { resolvedTheme, setTheme } = useTheme()
+  const [mobileTab, setMobileTab] = useState(mobileNavItems[0].label)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  const header = (
+    <Header
+      leftControls={
+        <>
+          <SidebarTrigger className="md:hidden" />
+          <Breadcrumb size="md">
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink
+                  href="/gameplan"
+                  className="flex items-center gap-1.5"
+                >
+                  <Zap className="size-4" />
+                  Products
+                </BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator>/</BreadcrumbSeparator>
+              <BreadcrumbItem>
+                <BreadcrumbLink href="/gameplan">General</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator>/</BreadcrumbSeparator>
+              <BreadcrumbItem>
+                <BreadcrumbPage>Task</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </>
+      }
+      rightControls={
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="sm" />}>
+              <Ellipsis className="size-4" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem>
+                <SquarePen className="size-4" />
+                Edit task
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <ListTodo className="size-4" />
+                View details
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Check className="size-4" />
+                Mark complete
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Archive className="size-4" />
+                Archive task
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <ClipboardCopy className="size-4" />
+                Copy task id
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <Trash2 className="size-4" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button size="sm">
+            <Plus />
+            New task
+          </Button>
+        </>
+      }
+    />
+  )
+
+  const content = (
+    <>
+      <div className="mx-auto max-w-4xl">
+        <SubHeader
+          className="scrollbar-hide mt-4 overflow-x-auto pl-5 [&_[data-slot=sub-header-left]]:shrink-0 [&_[data-slot=sub-header-left]>*]:shrink-0 [&_[data-slot=sub-header-right]]:shrink-0 [&_[data-slot=sub-header-right]>*]:shrink-0"
+          leftControls={
+            <span className="text-xl font-semibold text-foreground">Tasks</span>
+          }
+          rightControls={
+            <Select
+              items={[
+                { label: "Open", value: "open" },
+                { label: "Closed", value: "closed" },
+                { label: "All", value: "all" },
+              ]}
+              defaultValue="open"
+            >
+              <SelectTrigger
+                variant="subtle"
+                size={isMobile ? "md" : "sm"}
+                suffix={<ChevronDown />}
+              >
+                <SelectValue>
+                  {(value) => {
+                    const items = [
+                      { label: "Open", value: "open" },
+                      { label: "Closed", value: "closed" },
+                      { label: "All", value: "all" },
+                    ]
+                    const item = items.find((i) => i.value === value)
+                    return (
+                      <>
+                        <ArrowUpDown className="size-4" />
+                        {item?.label ?? "Open"}
+                      </>
+                    )
+                  }}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false} align="start">
+                <SelectGroup>
+                  <SelectItem value="open">Open</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          }
+        />
+
+        <div className="scrollbar-hide mt-2 in-data-[slot=mobile-shell]:mt-0 min-h-0 min-w-0 flex-1 overflow-auto px-5 pb-5 in-data-[slot=mobile-shell]:[&_th]:h-10 in-data-[slot=mobile-shell]:[&_[data-slot=checkbox]]:size-4 in-data-[slot=mobile-shell]:[&_[data-slot=checkbox-indicator]>svg]:size-3 in-data-[slot=mobile-shell]:[&_[data-slot=avatar]]:size-5">
+          <div className="md:[&>[data-slot=table-container]]:overflow-visible">
+            <Table
+              className="table-fixed"
+              style={{
+                width: Math.max(table.getTotalSize(), 0),
+                minWidth: "100%",
+              }}
+            >
+              <TableHeader className="group/thead sticky top-0 z-20 bg-background [&_th]:after:absolute [&_th]:after:inset-x-0 [&_th]:after:bottom-0 [&_th]:after:h-px [&_th]:after:bg-border-soft [&_th]:after:content-[''] has-[+tbody>tr:first-child:hover]:[&_th]:after:bg-transparent [&_tr]:border-b-0">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow key={headerGroup.id}>
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className="relative"
+                        style={{ width: header.getSize() }}
+                      >
+                        {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                          <div
+                            className="flex cursor-pointer items-center gap-1 select-none"
+                            onClick={header.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(
+                              header.column.columnDef.header,
+                              header.getContext()
+                            )}
+                            {{
+                              asc: <ArrowUp className="size-3.5" />,
+                              desc: <ArrowDown className="size-3.5" />,
+                            }[header.column.getIsSorted() as string] ?? null}
+                          </div>
+                        ) : (
+                          flexRender(
+                            header.column.columnDef.header,
+                            header.getContext()
+                          )
+                        )}
+                        {header.column.getCanResize() && (
+                          <div
+                            onDoubleClick={() => header.column.resetSize()}
+                            onMouseDown={header.getResizeHandler()}
+                            onTouchStart={header.getResizeHandler()}
+                            className={`absolute top-0 right-0 h-full w-1 cursor-col-resize touch-none select-none group-hover/thead:opacity-100 before:absolute before:top-1/2 before:left-1/2 before:h-5 before:w-0.5 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full ${
+                              header.column.getIsResizing()
+                                ? "opacity-100 before:bg-primary"
+                                : "opacity-0 before:bg-border"
+                            }`}
+                          />
+                        )}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {table.getRowModel().rows.map((row) => (
+                  <TableRow key={row.id}>
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell
+                        key={cell.id}
+                        style={{ width: cell.column.getSize() }}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+
+  // Viewport unknown until measured on the client — render nothing for that
+  // instant instead of flashing the desktop layout on phones.
+  if (isMobile === undefined) return null
+
+  if (isMobile) {
+    return (
+      <MobileShell>
+        <MobileShellHeader
+          prefix={
+            <div className="flex min-w-0 items-center gap-2">
+              <img
+                src="/images/svg/logo-gameplan.svg"
+                alt=""
+                className="size-7 shrink-0"
+              />
+              <h1 className="truncate text-xl leading-tight font-semibold text-foreground">
+                Tasks
+              </h1>
+            </div>
+          }
+          suffix={
+            <div className="flex items-center gap-2">
+              <Button size="default">
+                <Plus />
+                New task
+              </Button>
+            </div>
+          }
+        />
+        <MobileShellContent>{content}</MobileShellContent>
+        <MobileNav>
+          {mobileNavItems.map((item) => (
+            <MobileNavItem
+              key={item.label}
+              label={item.label}
+              icon={<item.icon />}
+              active={mobileTab === item.label}
+              onClick={() => setMobileTab(item.label)}
+            />
+          ))}
+          <MobileNavItem
+            label="Menu"
+            icon={<Menu />}
+            onClick={() => setDrawerOpen(true)}
+          />
+        </MobileNav>
+        <Drawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          showSwipeHandle
+        >
+          <DrawerContent>
+            <DrawerTitle className="sr-only">Gameplan</DrawerTitle>
+            <nav className="scroll-fade scroll-fade-5 flex min-h-0 flex-col gap-1 overflow-y-auto p-3 pt-2">
+              <Button
+                variant="ghost"
+                size="default"
+                className="w-full justify-start font-normal [&_svg]:text-muted-foreground"
+                onClick={() =>
+                  setTheme(resolvedTheme === "dark" ? "light" : "dark")
+                }
+              >
+                {resolvedTheme === "dark" ? <Sun /> : <Moon />}
+                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+              </Button>
+              {mobileDrawerItems.map((item) => (
+                <Button
+                  key={item.label}
+                  variant="ghost"
+                  size="default"
+                  className="w-full justify-start font-normal [&_svg]:text-muted-foreground"
+                >
+                  <item.icon />
+                  {item.label}
+                </Button>
+              ))}
+            </nav>
+          </DrawerContent>
+        </Drawer>
+      </MobileShell>
+    )
+  }
+
   return (
     <SidebarProvider>
       <GameplanSidebar />
       <SidebarInset className="h-screen min-w-0 overflow-hidden">
         <SidebarTrigger className="sr-only" />
         <div className="flex h-full min-w-0 flex-col overflow-hidden">
-          <Header
-            leftControls={
-              <>
-                <SidebarTrigger className="md:hidden" />
-                <Breadcrumb size="md">
-                  <BreadcrumbList>
-                    <BreadcrumbItem>
-                      <BreadcrumbLink
-                        href="/gameplan"
-                        className="flex items-center gap-1.5"
-                      >
-                        <Zap className="size-4" />
-                        Products
-                      </BreadcrumbLink>
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator>/</BreadcrumbSeparator>
-                    <BreadcrumbItem>
-                      <BreadcrumbLink href="/gameplan">General</BreadcrumbLink>
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator>/</BreadcrumbSeparator>
-                    <BreadcrumbItem>
-                      <BreadcrumbPage>Task</BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </BreadcrumbList>
-                </Breadcrumb>
-              </>
-            }
-            rightControls={
-              <>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={<Button variant="ghost" size="sm" />}
-                  >
-                    <Ellipsis className="size-4" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem>
-                      <SquarePen className="size-4" />
-                      Edit task
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <ListTodo className="size-4" />
-                      View details
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <Check className="size-4" />
-                      Mark complete
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <Archive className="size-4" />
-                      Archive task
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <ClipboardCopy className="size-4" />
-                      Copy task id
-                    </DropdownMenuItem>
-                    <DropdownMenuItem>
-                      <Trash2 className="size-4" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <Button size="sm">
-                  <Plus />
-                  New task
-                </Button>
-              </>
-            }
-          />
-          <div className="mx-auto max-w-4xl">
-            <SubHeader
-              className="scrollbar-hide overflow-x-auto [&_[data-slot=sub-header-left]]:shrink-0 [&_[data-slot=sub-header-left]>*]:shrink-0 [&_[data-slot=sub-header-right]]:shrink-0 [&_[data-slot=sub-header-right]>*]:shrink-0"
-              leftControls={
-                <span className="text-base font-medium text-foreground">
-                  Tasks
-                </span>
-              }
-              rightControls={
-                <Select
-                  items={[
-                    { label: "Open", value: "open" },
-                    { label: "Closed", value: "closed" },
-                    { label: "All", value: "all" },
-                  ]}
-                  defaultValue="open"
-                >
-                  <SelectTrigger
-                    variant="subtle"
-                    size="sm"
-                    suffix={<ChevronDown />}
-                  >
-                    <SelectValue>
-                      {(value) => {
-                        const items = [
-                          { label: "Open", value: "open" },
-                          { label: "Closed", value: "closed" },
-                          { label: "All", value: "all" },
-                        ]
-                        const item = items.find((i) => i.value === value)
-                        return (
-                          <>
-                            <ArrowUpDown className="size-4" />
-                            {item?.label ?? "Open"}
-                          </>
-                        )
-                      }}
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false} align="start">
-                    <SelectGroup>
-                      <SelectItem value="open">Open</SelectItem>
-                      <SelectItem value="closed">Closed</SelectItem>
-                      <SelectItem value="all">All</SelectItem>
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              }
-            />
-
-            <div className="scrollbar-hide mt-2 min-h-0 min-w-0 flex-1 overflow-auto px-5 pb-5">
-              <div className="[&>[data-slot=table-container]]:overflow-visible">
-                <Table
-                  className="table-fixed"
-                  style={{
-                    width: Math.max(table.getTotalSize(), 0),
-                    minWidth: "100%",
-                  }}
-                >
-                  <TableHeader className="group/thead sticky top-0 z-20 bg-background [&_th]:after:absolute [&_th]:after:inset-x-0 [&_th]:after:bottom-0 [&_th]:after:h-px [&_th]:after:bg-border-soft [&_th]:after:content-[''] has-[+tbody>tr:first-child:hover]:[&_th]:after:bg-transparent [&_tr]:border-b-0">
-                    {table.getHeaderGroups().map((headerGroup) => (
-                      <TableRow key={headerGroup.id}>
-                        {headerGroup.headers.map((header) => (
-                          <TableHead
-                            key={header.id}
-                            className="relative"
-                            style={{ width: header.getSize() }}
-                          >
-                            {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                              <div
-                                className="flex cursor-pointer items-center gap-1 select-none"
-                                onClick={header.column.getToggleSortingHandler()}
-                              >
-                                {flexRender(
-                                  header.column.columnDef.header,
-                                  header.getContext()
-                                )}
-                                {{
-                                  asc: <ArrowUp className="size-3.5" />,
-                                  desc: <ArrowDown className="size-3.5" />,
-                                }[header.column.getIsSorted() as string] ??
-                                  null}
-                              </div>
-                            ) : (
-                              flexRender(
-                                header.column.columnDef.header,
-                                header.getContext()
-                              )
-                            )}
-                            {header.column.getCanResize() && (
-                              <div
-                                onDoubleClick={() => header.column.resetSize()}
-                                onMouseDown={header.getResizeHandler()}
-                                onTouchStart={header.getResizeHandler()}
-                                className={`absolute top-0 right-0 h-full w-1 cursor-col-resize touch-none select-none group-hover/thead:opacity-100 before:absolute before:top-1/2 before:left-1/2 before:h-5 before:w-0.5 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full ${
-                                  header.column.getIsResizing()
-                                    ? "opacity-100 before:bg-primary"
-                                    : "opacity-0 before:bg-border"
-                                }`}
-                              />
-                            )}
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableHeader>
-                  <TableBody>
-                    {table.getRowModel().rows.map((row) => (
-                      <TableRow key={row.id}>
-                        {row.getVisibleCells().map((cell) => (
-                          <TableCell
-                            key={cell.id}
-                            style={{ width: cell.column.getSize() }}
-                          >
-                            {flexRender(
-                              cell.column.columnDef.cell,
-                              cell.getContext()
-                            )}
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          </div>
+          {header}
+          {content}
         </div>
       </SidebarInset>
     </SidebarProvider>

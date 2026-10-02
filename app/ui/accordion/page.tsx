@@ -1,178 +1,94 @@
 "use client"
 
-import * as React from "react"
-import { CreditCard, Package, ShieldCheck, Truck } from "lucide-react"
 import {
   Accordion,
+  AccordionContent,
   AccordionItem,
   AccordionTrigger,
-  AccordionContent,
 } from "@/components/ui/accordion"
-import { Badge } from "@/components/ui/badge"
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-sm font-medium text-foreground">{children}</h2>
 }
 
-export default function AccordionPage() {
-  const [value, setValue] = React.useState<string[]>(["item-1"])
+const faq = [
+  {
+    value: "shipping",
+    question: "How long does shipping take?",
+    answer:
+      "Orders ship within 24 hours and arrive in 3–5 business days. Express delivery arrives the next business day for orders placed before noon.",
+  },
+  {
+    value: "returns",
+    question: "What is the return policy?",
+    answer:
+      "Every purchase can be returned within 30 days in its original condition. Refunds land on the original payment method within a week of us receiving the parcel.",
+  },
+  {
+    value: "warranty",
+    question: "Is there a warranty?",
+    answer:
+      "All products carry a two-year limited warranty covering manufacturing defects. Accidental damage is not covered, but discounted repairs are available.",
+  },
+]
 
+export default function AccordionPage() {
   return (
     <div className="flex flex-col gap-12 p-8">
-      {/* Single */}
-      <div className="flex max-w-md flex-col gap-4">
-        <SectionTitle>Single</SectionTitle>
-        <Accordion defaultValue={["item-1"]}>
-          <AccordionItem value="item-1">
-            <AccordionTrigger>What is Espresso UI?</AccordionTrigger>
-            <AccordionContent>
-              A component library built on Base UI, styled with Tailwind.
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="item-2">
-            <AccordionTrigger>Is it accessible?</AccordionTrigger>
-            <AccordionContent>
-              Yes, primitives come from Base UI and follow WAI-ARIA patterns.
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="item-3">
-            <AccordionTrigger>Can I customize the styles?</AccordionTrigger>
-            <AccordionContent>
-              Every class is editable since you own the component source.
-            </AccordionContent>
-          </AccordionItem>
+      {/* Default */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Default</SectionTitle>
+        <Accordion className="w-96" multiple={false}>
+          {faq.map((item) => (
+            <AccordionItem key={item.value} value={item.value}>
+              <AccordionTrigger>{item.question}</AccordionTrigger>
+              <AccordionContent>
+                <p className="text-muted-foreground">{item.answer}</p>
+              </AccordionContent>
+            </AccordionItem>
+          ))}
         </Accordion>
       </div>
 
-      {/* Multiple */}
-      <div className="flex max-w-md flex-col gap-4">
-        <SectionTitle>Multiple</SectionTitle>
-        <Accordion multiple defaultValue={["item-1", "item-2"]}>
-          <AccordionItem value="item-1">
-            <AccordionTrigger>First section</AccordionTrigger>
-            <AccordionContent>Both sections can stay open.</AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="item-2">
-            <AccordionTrigger>Second section</AccordionTrigger>
-            <AccordionContent>
-              Toggling one doesn&apos;t close the other.
-            </AccordionContent>
-          </AccordionItem>
+      {/* Multiple Open */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Multiple Open</SectionTitle>
+        <Accordion className="w-96" defaultValue={["shipping", "returns"]}>
+          {faq.map((item) => (
+            <AccordionItem key={item.value} value={item.value}>
+              <AccordionTrigger>{item.question}</AccordionTrigger>
+              <AccordionContent>
+                <p className="text-muted-foreground">{item.answer}</p>
+              </AccordionContent>
+            </AccordionItem>
+          ))}
         </Accordion>
       </div>
 
-      {/* Disabled item */}
-      <div className="flex max-w-md flex-col gap-4">
-        <SectionTitle>Disabled item</SectionTitle>
-        <Accordion defaultValue={["item-1"]}>
-          <AccordionItem value="item-1">
-            <AccordionTrigger>Available section</AccordionTrigger>
-            <AccordionContent>This one works as usual.</AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="item-2" disabled>
-            <AccordionTrigger>Disabled section</AccordionTrigger>
-            <AccordionContent>You shouldn&apos;t see this.</AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      </div>
-
-      {/* Controlled */}
-      <div className="flex max-w-md flex-col gap-4">
-        <SectionTitle>Controlled</SectionTitle>
-        <Accordion multiple value={value} onValueChange={setValue}>
-          <AccordionItem value="item-1">
-            <AccordionTrigger>Shipping</AccordionTrigger>
+      {/* Disabled Item */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>Disabled Item</SectionTitle>
+        <Accordion className="w-96" multiple={false}>
+          <AccordionItem value="available">
+            <AccordionTrigger>Available question</AccordionTrigger>
             <AccordionContent>
-              Orders ship within 2 business days.
+              <p className="text-muted-foreground">
+                This item opens and closes as usual.
+              </p>
             </AccordionContent>
           </AccordionItem>
-          <AccordionItem value="item-2">
-            <AccordionTrigger>Returns</AccordionTrigger>
+          <AccordionItem value="locked" disabled>
+            <AccordionTrigger>Disabled question</AccordionTrigger>
             <AccordionContent>
-              Free returns within 30 days of delivery.
+              <p className="text-muted-foreground">Never visible.</p>
             </AccordionContent>
           </AccordionItem>
-          <AccordionItem value="item-3">
-            <AccordionTrigger>Warranty</AccordionTrigger>
+          <AccordionItem value="after">
+            <AccordionTrigger>Another available question</AccordionTrigger>
             <AccordionContent>
-              Covered by a 1-year limited warranty.
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-        <p className="text-sm text-muted-foreground">
-          Open: {value.length > 0 ? value.join(", ") : "none"}
-        </p>
-      </div>
-
-      {/* With icons */}
-      <div className="flex max-w-md flex-col gap-4">
-        <SectionTitle>With icons</SectionTitle>
-        <Accordion defaultValue={["shipping"]}>
-          <AccordionItem value="shipping">
-            <AccordionTrigger>
-              <span className="flex items-center gap-2">
-                <Truck className="size-4 text-muted-foreground" />
-                Shipping details
-              </span>
-            </AccordionTrigger>
-            <AccordionContent>
-              Standard delivery in 3–5 business days.
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="payment">
-            <AccordionTrigger>
-              <span className="flex items-center gap-2">
-                <CreditCard className="size-4 text-muted-foreground" />
-                Payment methods
-              </span>
-            </AccordionTrigger>
-            <AccordionContent>
-              We accept all major cards and PayPal.
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="security">
-            <AccordionTrigger>
-              <span className="flex items-center gap-2">
-                <ShieldCheck className="size-4 text-muted-foreground" />
-                Payment security
-              </span>
-            </AccordionTrigger>
-            <AccordionContent>
-              All transactions are encrypted and PCI compliant.
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      </div>
-
-      {/* Rich content */}
-      <div className="flex max-w-md flex-col gap-4">
-        <SectionTitle>Rich content</SectionTitle>
-        <Accordion defaultValue={["order-1"]}>
-          <AccordionItem value="order-1">
-            <AccordionTrigger>
-              <span className="flex flex-1 items-center justify-between pr-2">
-                <span className="flex items-center gap-2">
-                  <Package className="size-4 text-muted-foreground" />
-                  Order #4021
-                </span>
-                <Badge variant="secondary">Delivered</Badge>
-              </span>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="flex flex-col gap-1 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Placed</span>
-                  <span className="text-foreground">Jul 12, 2026</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Items</span>
-                  <span className="text-foreground">3</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Total</span>
-                  <span className="text-foreground">$128.40</span>
-                </div>
-              </div>
+              <p className="text-muted-foreground">
+                Keyboard navigation skips the disabled item above.
+              </p>
             </AccordionContent>
           </AccordionItem>
         </Accordion>

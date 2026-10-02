@@ -30,7 +30,47 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-sm font-medium text-foreground">{children}</h2>
 }
 
-const fruits = [
+// Items pass the whole { value, label } object as the ComboboxItem value –
+// Base UI displays `label` in the input and submits `value` automatically.
+type Produce = { label: string; value: string }
+
+function ChipsSizeExample({ size }: { size: "xs" | "sm" | "md" | "lg" }) {
+  const [value, setValue] = React.useState<Produce[]>([])
+  const anchorRef = useComboboxAnchor()
+  return (
+    <Combobox
+      variant="outline"
+      size={size}
+      multiple
+      items={fruits}
+      value={value}
+      onValueChange={(v: unknown) => setValue(v as Produce[])}
+    >
+      <ComboboxChips ref={anchorRef}>
+        {value.map((item) => (
+          <ComboboxChip key={item.value}>
+            <ComboboxValue>{item.label}</ComboboxValue>
+          </ComboboxChip>
+        ))}
+        <ComboboxChipsInput placeholder={`Add fruits (${size})...`} />
+      </ComboboxChips>
+      <ComboboxContent anchor={anchorRef}>
+        <ComboboxList>
+          <ComboboxCollection>
+            {(item: Produce) => (
+              <ComboboxItem key={item.value} value={item}>
+                {item.label}
+              </ComboboxItem>
+            )}
+          </ComboboxCollection>
+        </ComboboxList>
+        <ComboboxEmpty>No fruits found.</ComboboxEmpty>
+      </ComboboxContent>
+    </Combobox>
+  )
+}
+
+const fruits: Produce[] = [
   { label: "Apple", value: "apple" },
   { label: "Banana", value: "banana" },
   { label: "Blueberry", value: "blueberry" },
@@ -52,19 +92,19 @@ const fruitsWithIcons = [
   { label: "Grape", value: "grape", icon: Grape },
 ]
 
-const vegetables = [
+const vegetables: Produce[] = [
   { label: "Carrot", value: "carrot" },
   { label: "Broccoli", value: "broccoli" },
   { label: "Spinach", value: "spinach" },
   { label: "Kale", value: "kale" },
 ]
 
-const recents = [
+const recents: Produce[] = [
   { label: "Apple", value: "apple" },
   { label: "Banana", value: "banana" },
 ]
 
-const timezones = [
+const timezones: Produce[] = [
   { label: "Eastern Standard Time (EST)", value: "est" },
   { label: "Central Standard Time (CST)", value: "cst" },
   { label: "Mountain Standard Time (MST)", value: "mst" },
@@ -79,11 +119,13 @@ const timezones = [
 ]
 
 export default function ComboboxPage() {
-  const [singleValue, setSingleValue] = React.useState<string | null>(null)
-  const [chipsValue, setChipsValue] = React.useState<string[]>([])
-  const [chipsSubtleValue, setChipsSubtleValue] = React.useState<string[]>([])
+  const [singleValue, setSingleValue] = React.useState<Produce | null>(null)
+  const [chipsValue, setChipsValue] = React.useState<Produce[]>([])
+  const [chipsSubtleValue, setChipsSubtleValue] = React.useState<Produce[]>([])
+  const [chipsGhostValue, setChipsGhostValue] = React.useState<Produce[]>([])
   const anchorRef = useComboboxAnchor()
   const anchorSubtleRef = useComboboxAnchor()
+  const anchorGhostRef = useComboboxAnchor()
 
   return (
     <div className="flex flex-col gap-12 p-8">
@@ -95,8 +137,8 @@ export default function ComboboxPage() {
           <ComboboxContent>
             <ComboboxList>
               <ComboboxCollection>
-                {(item: { label: string; value: string }) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 )}
@@ -107,6 +149,28 @@ export default function ComboboxPage() {
         </Combobox>
       </div>
 
+      {/* Sizes */}
+      <div className="flex max-w-xs flex-col gap-4">
+        <SectionTitle>Sizes</SectionTitle>
+        {(["xs", "sm", "md", "lg"] as const).map((size) => (
+          <Combobox key={size} size={size} items={fruits}>
+            <ComboboxInput placeholder={`Size ${size}...`} />
+            <ComboboxContent>
+              <ComboboxList>
+                <ComboboxCollection>
+                  {(item: Produce) => (
+                    <ComboboxItem key={item.value} value={item}>
+                      {item.label}
+                    </ComboboxItem>
+                  )}
+                </ComboboxCollection>
+              </ComboboxList>
+              <ComboboxEmpty>No results found.</ComboboxEmpty>
+            </ComboboxContent>
+          </Combobox>
+        ))}
+      </div>
+
       {/* Outline variant (default) */}
       <div className="flex max-w-xs flex-col gap-4">
         <SectionTitle>Outline (default)</SectionTitle>
@@ -115,8 +179,8 @@ export default function ComboboxPage() {
           <ComboboxContent>
             <ComboboxList>
               <ComboboxCollection>
-                {(item: { label: string; value: string }) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 )}
@@ -135,8 +199,28 @@ export default function ComboboxPage() {
           <ComboboxContent>
             <ComboboxList>
               <ComboboxCollection>
-                {(item: { label: string; value: string }) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
+                    {item.label}
+                  </ComboboxItem>
+                )}
+              </ComboboxCollection>
+            </ComboboxList>
+            <ComboboxEmpty>No results found.</ComboboxEmpty>
+          </ComboboxContent>
+        </Combobox>
+      </div>
+
+      {/* Ghost variant */}
+      <div className="flex max-w-xs flex-col gap-4">
+        <SectionTitle>Ghost</SectionTitle>
+        <Combobox variant="ghost" items={fruits}>
+          <ComboboxInput placeholder="Pick a fruit..." />
+          <ComboboxContent>
+            <ComboboxList>
+              <ComboboxCollection>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 )}
@@ -160,7 +244,7 @@ export default function ComboboxPage() {
                   value: string
                   icon: React.ComponentType<{ className?: string }>
                 }) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                  <ComboboxItem key={item.value} value={item}>
                     <item.icon className="size-4" />
                     {item.label}
                   </ComboboxItem>
@@ -176,12 +260,9 @@ export default function ComboboxPage() {
       <div className="flex max-w-xs flex-col gap-4">
         <SectionTitle>Controlled with Clear Button</SectionTitle>
         <Combobox
-          items={timezones.map((t) => t.value)}
-          itemToStringLabel={(v: unknown) =>
-            timezones.find((t) => t.value === (v as string))?.label ?? ""
-          }
-          value={singleValue ?? ""}
-          onValueChange={(v: unknown) => setSingleValue(v as string)}
+          items={timezones}
+          value={singleValue}
+          onValueChange={(v: unknown) => setSingleValue(v as Produce | null)}
         >
           <ComboboxInput
             placeholder="Search timezones..."
@@ -191,22 +272,19 @@ export default function ComboboxPage() {
           <ComboboxContent>
             <ComboboxList>
               <ComboboxCollection>
-                {(value: unknown) => {
-                  const v = value as string
-                  const item = timezones.find((t) => t.value === v)
-                  return (
-                    <ComboboxItem key={v} value={v}>
-                      {item?.label ?? v}
-                    </ComboboxItem>
-                  )
-                }}
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
+                    {item.label}
+                  </ComboboxItem>
+                )}
               </ComboboxCollection>
             </ComboboxList>
             <ComboboxEmpty>No timezones found.</ComboboxEmpty>
           </ComboboxContent>
         </Combobox>
         <p className="text-sm text-muted-foreground">
-          Selected: <span className="font-medium">{singleValue ?? "none"}</span>
+          Selected:{" "}
+          <span className="font-medium">{singleValue?.value ?? "none"}</span>
         </p>
       </div>
 
@@ -220,7 +298,7 @@ export default function ComboboxPage() {
               <ComboboxGroup>
                 <ComboboxLabel>Fruits</ComboboxLabel>
                 {fruits.slice(0, 5).map((item) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 ))}
@@ -229,7 +307,7 @@ export default function ComboboxPage() {
               <ComboboxGroup>
                 <ComboboxLabel>Vegetables</ComboboxLabel>
                 {vegetables.map((item) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 ))}
@@ -250,10 +328,7 @@ export default function ComboboxPage() {
               <ComboboxGroup>
                 <ComboboxLabel>Recent</ComboboxLabel>
                 {recents.map((item) => (
-                  <ComboboxItem
-                    key={`recent-${item.value}`}
-                    value={`recent-${item.value}`}
-                  >
+                  <ComboboxItem key={`recent-${item.value}`} value={item}>
                     {item.label}
                   </ComboboxItem>
                 ))}
@@ -262,7 +337,7 @@ export default function ComboboxPage() {
               <ComboboxGroup>
                 <ComboboxLabel>All fruits</ComboboxLabel>
                 {fruits.map((item) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 ))}
@@ -281,8 +356,8 @@ export default function ComboboxPage() {
           <ComboboxContent>
             <ComboboxList>
               <ComboboxCollection>
-                {(item: { label: string; value: string }) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 )}
@@ -300,24 +375,21 @@ export default function ComboboxPage() {
           multiple
           items={fruits}
           value={chipsValue}
-          onValueChange={(v: unknown) => setChipsValue(v as string[])}
+          onValueChange={(v: unknown) => setChipsValue(v as Produce[])}
         >
           <ComboboxChips ref={anchorRef}>
-            {chipsValue.map((v) => {
-              const item = fruits.find((f) => f.value === v)
-              return (
-                <ComboboxChip key={v}>
-                  <ComboboxValue>{item?.label ?? v}</ComboboxValue>
-                </ComboboxChip>
-              )
-            })}
+            {chipsValue.map((item) => (
+              <ComboboxChip key={item.value}>
+                <ComboboxValue>{item.label}</ComboboxValue>
+              </ComboboxChip>
+            ))}
             <ComboboxChipsInput placeholder="Add fruits..." />
           </ComboboxChips>
           <ComboboxContent anchor={anchorRef}>
             <ComboboxList>
               <ComboboxCollection>
-                {(item: { label: string; value: string }) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 )}
@@ -329,7 +401,9 @@ export default function ComboboxPage() {
         <p className="text-sm text-muted-foreground">
           Selected:{" "}
           <span className="font-medium">
-            {chipsValue.length ? chipsValue.join(", ") : "none"}
+            {chipsValue.length
+              ? chipsValue.map((i) => i.value).join(", ")
+              : "none"}
           </span>
         </p>
       </div>
@@ -342,24 +416,21 @@ export default function ComboboxPage() {
           multiple
           items={fruits}
           value={chipsSubtleValue}
-          onValueChange={(v: unknown) => setChipsSubtleValue(v as string[])}
+          onValueChange={(v: unknown) => setChipsSubtleValue(v as Produce[])}
         >
           <ComboboxChips ref={anchorSubtleRef}>
-            {chipsSubtleValue.map((v) => {
-              const item = fruits.find((f) => f.value === v)
-              return (
-                <ComboboxChip key={v}>
-                  <ComboboxValue>{item?.label ?? v}</ComboboxValue>
-                </ComboboxChip>
-              )
-            })}
+            {chipsSubtleValue.map((item) => (
+              <ComboboxChip key={item.value}>
+                <ComboboxValue>{item.label}</ComboboxValue>
+              </ComboboxChip>
+            ))}
             <ComboboxChipsInput placeholder="Add fruits..." />
           </ComboboxChips>
           <ComboboxContent anchor={anchorSubtleRef}>
             <ComboboxList>
               <ComboboxCollection>
-                {(item: { label: string; value: string }) => (
-                  <ComboboxItem key={item.value} value={item.value}>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
                     {item.label}
                   </ComboboxItem>
                 )}
@@ -371,9 +442,60 @@ export default function ComboboxPage() {
         <p className="text-sm text-muted-foreground">
           Selected:{" "}
           <span className="font-medium">
-            {chipsSubtleValue.length ? chipsSubtleValue.join(", ") : "none"}
+            {chipsSubtleValue.length
+              ? chipsSubtleValue.map((i) => i.value).join(", ")
+              : "none"}
           </span>
         </p>
+      </div>
+
+      {/* Multi-select with Chips — Ghost */}
+      <div className="flex max-w-md flex-col gap-4">
+        <SectionTitle>Multi-select Chips — Ghost</SectionTitle>
+        <Combobox
+          variant="ghost"
+          multiple
+          items={fruits}
+          value={chipsGhostValue}
+          onValueChange={(v: unknown) => setChipsGhostValue(v as Produce[])}
+        >
+          <ComboboxChips ref={anchorGhostRef}>
+            {chipsGhostValue.map((item) => (
+              <ComboboxChip key={item.value}>
+                <ComboboxValue>{item.label}</ComboboxValue>
+              </ComboboxChip>
+            ))}
+            <ComboboxChipsInput placeholder="Add fruits..." />
+          </ComboboxChips>
+          <ComboboxContent anchor={anchorGhostRef}>
+            <ComboboxList>
+              <ComboboxCollection>
+                {(item: Produce) => (
+                  <ComboboxItem key={item.value} value={item}>
+                    {item.label}
+                  </ComboboxItem>
+                )}
+              </ComboboxCollection>
+            </ComboboxList>
+            <ComboboxEmpty>No fruits found.</ComboboxEmpty>
+          </ComboboxContent>
+        </Combobox>
+        <p className="text-sm text-muted-foreground">
+          Selected:{" "}
+          <span className="font-medium">
+            {chipsGhostValue.length
+              ? chipsGhostValue.map((i) => i.value).join(", ")
+              : "none"}
+          </span>
+        </p>
+      </div>
+
+      {/* Multi-select with Chips — Sizes */}
+      <div className="flex max-w-md flex-col gap-4">
+        <SectionTitle>Multi-select Chips — Sizes</SectionTitle>
+        {(["xs", "sm", "md", "lg"] as const).map((size) => (
+          <ChipsSizeExample key={size} size={size} />
+        ))}
       </div>
 
       {/* In a Field with label + description */}
@@ -386,8 +508,8 @@ export default function ComboboxPage() {
             <ComboboxContent>
               <ComboboxList>
                 <ComboboxCollection>
-                  {(item: { label: string; value: string }) => (
-                    <ComboboxItem key={item.value} value={item.value}>
+                  {(item: Produce) => (
+                    <ComboboxItem key={item.value} value={item}>
                       {item.label}
                     </ComboboxItem>
                   )}
@@ -412,8 +534,8 @@ export default function ComboboxPage() {
             <ComboboxContent>
               <ComboboxList>
                 <ComboboxCollection>
-                  {(item: { label: string; value: string }) => (
-                    <ComboboxItem key={item.value} value={item.value}>
+                  {(item: Produce) => (
+                    <ComboboxItem key={item.value} value={item}>
                       {item.label}
                     </ComboboxItem>
                   )}

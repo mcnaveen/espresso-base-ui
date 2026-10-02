@@ -1,10 +1,23 @@
 "use client"
 
 import * as React from "react"
-import { toast } from "sonner"
+import {
+  Toast,
+  ToastPortal,
+  ToastProvider,
+  ToastViewport,
+  createToastManager,
+  useToastManager,
+} from "@/components/ui/toast"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+
+type NotificationToastData = { render: (id: string) => React.ReactNode }
+
+// A dedicated toast manager so notifications stack/animate independently of the
+// standard toast Toaster, while reusing the Toast primitives for rendering.
+const notificationManager = createToastManager<NotificationToastData>()
 
 function CloseIcon({ className }: { className?: string }) {
   return (
@@ -27,23 +40,24 @@ function CloseIcon({ className }: { className?: string }) {
 }
 
 const notificationVariants = cva(
-  "relative flex w-[390px] overflow-hidden rounded-lg bg-card px-3 py-2.5 shadow-3xl",
+  "relative flex min-w-[390px] overflow-hidden rounded-lg bg-card shadow-elevation-md",
   {
     variants: {
       variant: {
-        inline: "flex-row items-center gap-2",
-        "long-text": "flex-col gap-3 px-3! pt-3! pb-4!",
-        notification: "flex-col gap-3",
-        modal: "flex-col items-center gap-3 px-3! py-4! text-center",
+        default: "min-h-10 flex-row items-center gap-1 px-3 py-1",
+        banner: "flex-col gap-1 p-3 pb-4",
+        avatar: "flex-row items-start gap-2.5 p-3",
+        compact: "flex-col items-center gap-3 p-3 py-4 text-center",
       },
     },
     defaultVariants: {
-      variant: "inline",
+      variant: "default",
     },
   }
 )
 
-type ActionType = "none" | "single" | "dual" | "split"
+type NotificationVariant = "default" | "banner" | "avatar" | "compact"
+type ActionType = "none" | "single" | "dual"
 
 type NotificationAction = {
   label: string
@@ -54,8 +68,10 @@ type NotificationAction = {
 type NotificationOptions = VariantProps<typeof notificationVariants> & {
   title: string
   description?: string
+  /** Leading icon (default/banner) or avatar (avatar variant). */
   prefix?: React.ReactNode
-  suffix?: boolean
+  /** Show the close (✕) icon button. */
+  showClose?: boolean
   actionType?: ActionType
   actions?: NotificationAction[]
   timestamp?: string
@@ -72,329 +88,294 @@ type NotificationOptions = VariantProps<typeof notificationVariants> & {
 
 function notify(options: NotificationOptions) {
   const {
-    variant = "inline",
+    variant = "default",
     title,
     description,
     prefix,
-    suffix = false,
+    showClose = false,
     actionType = "none",
     actions = [],
     timestamp,
     unread,
     duration,
-    position,
   } = options
 
-  const isSplit = actionType === "split"
+  const visibleActions =
+    actionType === "none"
+      ? []
+      : actions.slice(0, actionType === "single" ? 1 : 2)
 
-  return toast.custom(
-    (id) => (
-      <div
-        data-slot="notification"
-        data-variant={variant}
-        className={cn(
-          notificationVariants({ variant }),
-          suffix && "pr-10 tracking-wider",
-          isSplit && "flex-row! items-stretch! gap-0! p-0! tracking-wider"
-        )}
-      >
-        {isSplit ? (
-          <SplitLayout
-            id={id}
-            title={title}
-            description={description}
-            prefix={prefix}
-            actions={actions}
-          />
-        ) : variant === "modal" ? (
-          <ModalLayout
-            id={id}
-            title={title}
-            description={description}
-            actionType={actionType}
-            actions={actions}
-          />
-        ) : (
-          <DefaultLayout
-            id={id}
-            variant={variant!}
-            title={title}
-            description={description}
-            prefix={prefix}
-            timestamp={timestamp}
-            unread={unread}
-            actionType={actionType}
-            actions={actions}
-          />
-        )}
+  const layoutProps = {
+    title,
+    description,
+    prefix,
+    timestamp,
+    unread,
+    showClose,
+    actions: visibleActions,
+  }
 
-        {suffix && !isSplit && (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className={cn(
-              "absolute right-3",
-              variant === "inline" ? "top-1/2 -translate-y-1/2" : "top-2.5"
-            )}
-            onClick={() => toast.dismiss(id)}
-          >
-            <CloseIcon className="size-4" />
-          </Button>
-        )}
-      </div>
-    ),
-    {
-      duration: duration ?? 90000,
-      position,
-      unstyled: true,
-      className:
-        "!p-0 !shadow-none !border-none !bg-transparent !gap-0 [&_[data-content]]:!p-0 [&_[data-content]]:!m-0 [&_[data-title]]:!p-0 [&_[data-title]]:!m-0 [&_[data-content]]:!gap-0 [&_[data-title]]:!gap-0",
-    }
-  )
+  return notificationManager.add({
+    timeout: duration ?? 90000,
+    data: {
+      render: (id) => (
+        <div
+          data-slot="notification"
+          data-variant={variant}
+          className={cn(notificationVariants({ variant }))}
+        >
+          {variant === "default" ? (
+            <DefaultLayout id={id} {...layoutProps} />
+          ) : variant === "banner" ? (
+            <BannerLayout id={id} {...layoutProps} />
+          ) : variant === "avatar" ? (
+            <AvatarLayout id={id} {...layoutProps} />
+          ) : (
+            <CompactLayout id={id} {...layoutProps} />
+          )}
+        </div>
+      ),
+    },
+  })
 }
 
-// --- Layouts ---
+// --- Shared pieces ---
 
-function DefaultLayout({
-  id,
-  variant,
-  title,
-  description,
-  prefix,
-  timestamp,
-  unread,
-  actionType,
-  actions,
-}: {
-  id: string | number
-  variant: string
+type LayoutProps = {
+  id: string
   title: string
   description?: string
   prefix?: React.ReactNode
   timestamp?: string
   unread?: boolean
-  actionType: ActionType
+  showClose: boolean
   actions: NotificationAction[]
-}) {
-  const isInline = variant === "inline"
+}
 
+function CloseButton({ id, className }: { id: string; className?: string }) {
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      aria-label="Dismiss notification"
+      className={className}
+      onClick={() => notificationManager.close(id)}
+    >
+      <CloseIcon className="size-3.5" />
+    </Button>
+  )
+}
+
+function ActionButtons({
+  id,
+  actions,
+  className,
+  buttonClassName,
+}: {
+  id: string
+  actions: NotificationAction[]
+  className?: string
+  buttonClassName?: string
+}) {
+  if (actions.length === 0) return null
+  return (
+    <div className={cn("flex flex-row gap-1.5", className)}>
+      {actions.map((action, index) => (
+        <Button
+          key={index}
+          variant={action.variant ?? (index === 0 ? "secondary" : "outline")}
+          size="sm"
+          className={cn("", buttonClassName)}
+          onClick={() => {
+            action.onClick()
+            notificationManager.close(id)
+          }}
+        >
+          {action.label}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
+// --- Layouts ---
+
+// Single row: [icon] title ... [text action(s)] [close]
+function DefaultLayout({ id, title, prefix, showClose, actions }: LayoutProps) {
   return (
     <>
-      <div
-        className={cn(
-          "flex flex-1 gap-2.5",
-          isInline ? "items-center" : "items-start"
-        )}
-      >
-        {prefix && (
-          <span className="mt-0.5 shrink-0 text-muted-foreground [&_svg]:size-4">
-            {prefix}
-          </span>
-        )}
-        <div className="flex flex-1 flex-col gap-1">
-          <span className="text-base leading-base font-medium tracking-wider text-foreground">
-            {title}
-          </span>
-          {description && (
-            <span className="text-base leading-lg font-normal tracking-wider text-muted-foreground">
-              {description}
-            </span>
-          )}
-          {timestamp && (
-            <span className="mt-0.5 text-xs leading-base font-normal tracking-normal text-muted-foreground">
-              {timestamp}
-            </span>
-          )}
-
-          {/* Dual action buttons inside content column */}
-          {!isInline && actionType === "dual" && actions.length > 0 && (
-            <div className="mt-1 flex flex-row gap-2">
-              {actions.map((a, i) => (
-                <Button
-                  className="tracking-wider"
-                  key={i}
-                  variant={a.variant ?? (i === 0 ? "secondary" : "outline")}
-                  size="sm"
-                  onClick={() => {
-                    a.onClick()
-                    toast.dismiss(id)
-                  }}
-                >
-                  {a.label}
-                </Button>
-              ))}
-            </div>
-          )}
-
-          {/* Single action button inside content column */}
-          {!isInline && actionType === "single" && actions.length > 0 && (
-            <div className="mt-1">
-              <Button
-                variant={actions[0].variant ?? "outline"}
-                size="sm"
-                className="w-full tracking-wider"
-                onClick={() => {
-                  actions[0].onClick()
-                  toast.dismiss(id)
-                }}
-              >
-                {actions[0].label}
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Inline single action */}
-        {isInline && actionType !== "none" && actions.length > 0 && (
-          <Button
-            variant={actions[0].variant ?? "ghost"}
-            size="sm"
-            className="shrink-0 tracking-wider"
-            onClick={() => {
-              actions[0].onClick()
-              toast.dismiss(id)
-            }}
-          >
-            {actions[0].label}
-          </Button>
-        )}
-
-        {unread && (
-          <span className="mt-1.5 size-2 shrink-0 rounded-full bg-blue-500" />
-        )}
-      </div>
+      {prefix && (
+        <span className="shrink-0 text-muted-foreground [&_svg]:size-4">
+          {prefix}
+        </span>
+      )}
+      <span className="flex-1 text-base leading-base font-medium text-foreground">
+        {title}
+      </span>
+      {actions.map((action, index) => (
+        <Button
+          key={index}
+          variant={action.variant ?? "ghost"}
+          size="sm"
+          className="shrink-0"
+          onClick={() => {
+            action.onClick()
+            notificationManager.close(id)
+          }}
+        >
+          {action.label}
+        </Button>
+      ))}
+      {showClose && <CloseButton id={id} className="shrink-0" />}
     </>
   )
 }
 
-function SplitLayout({
+// Column: [icon] title / description / action buttons; close pinned top-right.
+function BannerLayout({
   id,
   title,
   description,
   prefix,
+  showClose,
   actions,
-}: {
-  id: string | number
-  title: string
-  description?: string
-  prefix?: React.ReactNode
-  actions: NotificationAction[]
-}) {
+}: LayoutProps) {
   return (
     <>
-      <div className="flex flex-1 flex-col gap-1 p-4">
-        <div className="flex items-center gap-2">
-          {prefix && (
-            <span className="shrink-0 text-muted-foreground [&_svg]:size-4">
-              {prefix}
-            </span>
-          )}
-          <span className="text-base leading-base font-semibold tracking-wider text-foreground">
-            {title}
+      <div className={cn("flex items-center gap-2.5", showClose && "pr-8")}>
+        {prefix && (
+          <span className="shrink-0 text-muted-foreground [&_svg]:size-4">
+            {prefix}
           </span>
-        </div>
+        )}
+        <span className="text-base leading-base font-medium text-foreground">
+          {title}
+        </span>
+      </div>
+      {description && (
+        <span className="text-base leading-lg font-normal text-muted-foreground">
+          {description}
+        </span>
+      )}
+      <ActionButtons id={id} actions={actions} className="mt-1" />
+      {showClose && <CloseButton id={id} className="absolute top-2 right-2" />}
+    </>
+  )
+}
+
+// Row: avatar + content column (title / description / timestamp / actions);
+// close or unread dot pinned top-right.
+function AvatarLayout({
+  id,
+  title,
+  description,
+  prefix,
+  timestamp,
+  unread,
+  showClose,
+  actions,
+}: LayoutProps) {
+  return (
+    <>
+      {prefix && (
+        <span className="mt-0.5 shrink-0 text-muted-foreground">{prefix}</span>
+      )}
+      <div className={cn("flex flex-1 flex-col gap-1", showClose && "pr-8")}>
+        <span className="text-base leading-base font-medium text-foreground">
+          {title}
+        </span>
         {description && (
-          <span
-            className={cn(
-              "text-base leading-lg font-normal tracking-wider text-muted-foreground",
-              prefix && "pl-6"
-            )}
-          >
+          <span className="text-base leading-lg font-normal text-muted-foreground">
             {description}
           </span>
         )}
+        {timestamp && (
+          <span className="mt-0.5 text-xs leading-base font-normal text-muted-foreground">
+            {timestamp}
+          </span>
+        )}
+        <ActionButtons id={id} actions={actions} className="mt-1" />
       </div>
-      {actions.length > 0 && (
-        <div className="flex flex-col border-l border-border">
-          {actions.map((a, i) => (
-            <Button
-              key={i}
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "flex-1 rounded-none px-4",
-                i > 0 && "border-t border-border",
-                "tracking-wider"
-              )}
-              onClick={() => {
-                a.onClick()
-                toast.dismiss(id)
-              }}
-            >
-              {a.label}
-            </Button>
-          ))}
-        </div>
+      {showClose ? (
+        <CloseButton id={id} className="absolute top-2 right-2" />
+      ) : (
+        unread && (
+          <span className="absolute top-3.5 right-3.5 size-2 rounded-full bg-blue-500" />
+        )
       )}
     </>
   )
 }
 
-function ModalLayout({
+// Centered column: title / description / full-width action buttons.
+function CompactLayout({
   id,
   title,
   description,
-  actionType,
+  showClose,
   actions,
-}: {
-  id: string | number
-  title: string
-  description?: string
-  actionType: ActionType
-  actions: NotificationAction[]
-}) {
+}: LayoutProps) {
   return (
     <>
       <div className="flex w-full flex-col gap-1 text-center">
-        <span className="text-base leading-base font-semibold tracking-wider text-foreground">
+        <span className="text-base leading-base font-medium text-foreground">
           {title}
         </span>
         {description && (
-          <span className="text-base leading-lg font-normal tracking-wider text-muted-foreground">
+          <span className="text-base leading-lg font-normal text-muted-foreground">
             {description}
           </span>
         )}
       </div>
-      {actionType !== "none" && actions.length > 0 && (
-        <div
-          className={cn(
-            "flex w-full gap-2",
-            actionType === "single" ? "flex-col" : "flex-row"
-          )}
-        >
-          {actions.map((a, i) => (
-            <Button
-              key={i}
-              variant={
-                a.variant ??
-                (actions.length > 1
-                  ? i === 0
-                    ? "secondary"
-                    : "outline"
-                  : "secondary")
-              }
-              size="sm"
-              className={cn(
-                actionType === "single" ? "w-full" : "flex-1",
-                "tracking-wider"
-              )}
-              onClick={() => {
-                a.onClick()
-                toast.dismiss(id)
-              }}
-            >
-              {a.label}
-            </Button>
-          ))}
-        </div>
-      )}
+      <ActionButtons
+        id={id}
+        actions={actions}
+        className="w-full"
+        buttonClassName={actions.length > 1 ? "flex-1" : "w-full"}
+      />
+      {showClose && <CloseButton id={id} className="absolute top-2 right-2" />}
     </>
+  )
+}
+
+// --- Toaster ---
+
+// Renders each notification's custom card inside a Toast root, stripped of the
+// standard toast shell (bg/shadow/radius/padding) so only the card's own styles
+// show — while keeping the root's stacking/slide animation.
+function NotificationList() {
+  const { toasts } = useToastManager()
+
+  return toasts.map((toastItem) => (
+    <Toast
+      key={toastItem.id}
+      toast={toastItem}
+      className="w-auto rounded-none bg-transparent p-0 text-foreground shadow-none"
+    >
+      {(toastItem.data as NotificationToastData | undefined)?.render?.(
+        toastItem.id
+      )}
+    </Toast>
+  ))
+}
+
+function NotificationToaster() {
+  return (
+    <ToastProvider toastManager={notificationManager}>
+      <ToastPortal>
+        <ToastViewport className="max-w-[26rem]">
+          <NotificationList />
+        </ToastViewport>
+      </ToastPortal>
+    </ToastProvider>
   )
 }
 
 export {
   notify,
+  NotificationToaster,
   notificationVariants,
   type NotificationOptions,
   type NotificationAction,
+  type NotificationVariant,
 }

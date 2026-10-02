@@ -33,7 +33,7 @@ const tagVariants = cva(
         primary:
           "bg-primary text-primary-foreground hover:bg-primary/86 active:bg-primary/75 data-disabled:bg-secondary data-disabled:text-card-foreground",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-muted active:bg-accent data-disabled:bg-secondary data-disabled:text-card-foreground",
+          "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),black_2%)] focus-visible:bg-[color-mix(in_oklch,var(--secondary),black_2%)] active:bg-[color-mix(in_oklch,var(--secondary),black_5%)] dark:hover:bg-[color-mix(in_oklch,var(--secondary),white_5%)] dark:focus-visible:bg-[color-mix(in_oklch,var(--secondary),white_5%)] dark:active:bg-[color-mix(in_oklch,var(--secondary),white_13%)] data-disabled:bg-secondary data-disabled:text-card-foreground",
         outline:
           "bg-background text-secondary-foreground shadow-default hover:border-border-normal focus-visible:bg-secondary active:border-border-strong active:bg-accent data-disabled:border-border data-disabled:bg-transparent data-disabled:text-card-foreground",
         ghost:
@@ -42,17 +42,12 @@ const tagVariants = cva(
           "bg-destructive text-destructive-foreground hover:bg-destructive-hover focus-visible:shadow-none focus-visible:ring-2 focus-visible:ring-destructive/50 active:bg-destructive-active data-disabled:bg-destructive-disabled data-disabled:text-destructive-disabled-foreground",
       },
       size: {
-        sm: "h-5 rounded-xs px-1.5 text-xs leading-base tracking-normal",
-        default: "h-6 rounded-sm px-1.5 text-sm leading-base tracking-normal",
-        lg: "h-7 rounded-lg px-2 text-base leading-base tracking-normal",
+        sm: "h-5 rounded-xs pl-1.5 pr-1 text-xs leading-base tracking-normal",
+        default:
+          "h-6 rounded-sm pl-1.5 pr-1 text-sm leading-base tracking-normal",
+        lg: "h-7 rounded-md pl-2 pr-1.5 text-base leading-base tracking-normal",
       },
     },
-    compoundVariants: [
-      // outline variant: reduce height by 2px for each size to account for outer shadow ring
-      { variant: "outline", size: "sm", className: "h-4.5!" },
-      { variant: "outline", size: "default", className: "h-5.5!" },
-      { variant: "outline", size: "lg", className: "h-6.5!" },
-    ],
     defaultVariants: {
       variant: "primary",
       size: "default",
@@ -61,7 +56,7 @@ const tagVariants = cva(
 )
 
 const tagCloseVariants = cva(
-  "-mr-0.5 inline-flex shrink-0 cursor-pointer items-center justify-center rounded-xs transition-opacity hover:opacity-70 [&>svg]:size-3"
+  "inline-flex shrink-0 cursor-pointer items-center justify-center rounded-xs transition-opacity hover:opacity-70 [&>svg]:size-3"
 )
 
 type TagProps = React.ComponentProps<"span"> &

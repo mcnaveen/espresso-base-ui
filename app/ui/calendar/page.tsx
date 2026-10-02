@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Calendar } from "@/components/ui/calendar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,10 +19,8 @@ import {
 } from "@/components/ui/select"
 import { cn } from "@/lib/utils"
 import type { DateRange } from "react-day-picker"
-import { addDays, format } from "date-fns"
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
-import { DateRangePicker } from "@/components/ui/date-range-picker"
-import { DatePicker } from "@/components/ui/date-picker"
+import { addDays, addMonths, format, subMonths } from "date-fns"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-sm font-medium text-foreground">{children}</h2>
@@ -42,6 +40,164 @@ const monthNames = [
   "Nov",
   "Dec",
 ]
+
+// Calendar whose caption is a button: clicking it swaps the month grid for a
+// two-column scrollable year/month picker sized to match the calendar.
+// Picking a year keeps the picker open; picking a month returns to the grid.
+function MonthYearCalendar({
+  className,
+  ...props
+}: React.ComponentProps<typeof Calendar>) {
+  const [internalMonth, setInternalMonth] = useState<Date>(
+    () => (props.defaultMonth as Date | undefined) ?? new Date()
+  )
+  const month = (props.month as Date | undefined) ?? internalMonth
+  const setMonth = (next: Date) => {
+    setInternalMonth(next)
+    props.onMonthChange?.(next)
+  }
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [panelSize, setPanelSize] = useState<{
+    width: number
+    height: number
+  } | null>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const yearRef = useRef<HTMLButtonElement>(null)
+  const monthRef = useRef<HTMLButtonElement>(null)
+
+  const years = Array.from({ length: 14 }, (_, i) => 2017 + i)
+
+  useEffect(() => {
+    if (pickerOpen) {
+      yearRef.current?.scrollIntoView({ block: "center" })
+      monthRef.current?.scrollIntoView({ block: "center" })
+    }
+  }, [pickerOpen])
+
+  const openPicker = () => {
+    const rect = wrapRef.current?.getBoundingClientRect()
+    if (rect) setPanelSize({ width: rect.width, height: rect.height })
+    setPickerOpen(true)
+  }
+
+  const captionButton = (
+    <Button
+      variant="ghost"
+      size="xs"
+      className="text-sm font-medium"
+      onClick={() => (pickerOpen ? setPickerOpen(false) : openPicker())}
+    >
+      {format(month, "MMM yyyy")}
+    </Button>
+  )
+
+  if (pickerOpen) {
+    return (
+      <div
+        className="flex flex-col p-2 [--cell-size:1.5rem]"
+        style={panelSize ?? { width: 196, height: 226 }}
+      >
+        <div className="flex h-(--cell-size) shrink-0 items-center">
+          {captionButton}
+        </div>
+        <div className="mt-1.5 flex min-h-0 flex-1 gap-1">
+          <div className="scrollbar-hide flex flex-1 flex-col gap-0.5 overflow-y-auto [animation:scroll-fade-y_linear_both] [animation-timeline:scroll(self)]">
+            {years.map((year) => (
+              <Button
+                key={year}
+                ref={year === month.getFullYear() ? yearRef : undefined}
+                variant="ghost"
+                size="sm"
+                onClick={() => setMonth(new Date(year, month.getMonth(), 1))}
+                className={cn(
+                  "shrink-0 justify-start text-sm",
+                  year === month.getFullYear() && "bg-secondary"
+                )}
+              >
+                {year}
+              </Button>
+            ))}
+          </div>
+          <div className="scrollbar-hide flex flex-1 flex-col gap-0.5 overflow-y-auto [animation:scroll-fade-y_linear_both] [animation-timeline:scroll(self)]">
+            {monthNames.map((name, index) => (
+              <Button
+                key={name}
+                ref={index === month.getMonth() ? monthRef : undefined}
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setMonth(new Date(month.getFullYear(), index, 1))
+                  setPickerOpen(false)
+                }}
+                className={cn(
+                  "shrink-0 justify-start text-sm",
+                  index === month.getMonth() && "bg-secondary"
+                )}
+              >
+                {name}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={wrapRef} className="w-fit">
+      <Calendar
+        {...props}
+        month={month}
+        onMonthChange={setMonth}
+        className={className}
+        components={{
+          MonthCaption: () => (
+            <div className="flex h-(--cell-size) items-center">
+              {captionButton}
+            </div>
+          ),
+          Nav: ({ className: navClassName }) => (
+            // the nav strip spans the whole header; let clicks pass through
+            // to the caption button underneath except on the nav buttons
+            <div
+              className={cn(
+                navClassName,
+                // match the caption row height so the nav buttons stay
+                // vertically centered at any --cell-size
+                "pointer-events-none h-(--cell-size) [&>*]:pointer-events-auto"
+              )}
+            >
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Previous month"
+                onClick={() => setMonth(subMonths(month, 1))}
+              >
+                <ChevronLeft />
+              </Button>
+              <Button
+                variant="ghost"
+                size="xs"
+                className="text-sm"
+                onClick={() => setMonth(new Date())}
+              >
+                Today
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Next month"
+                onClick={() => setMonth(addMonths(month, 1))}
+              >
+                <ChevronRight />
+              </Button>
+            </div>
+          ),
+        }}
+      />
+    </div>
+  )
+}
 
 function CalendarPopover({
   buttonContent,
@@ -76,20 +232,6 @@ function CalendarPopover({
       </PopoverContent>
     </Popover>
   )
-}
-
-function formatDateShort(date: Date | undefined) {
-  return date
-    ? `${date.getDate()}/${date.getMonth() + 1}/${date.getFullYear()}`
-    : ""
-}
-
-function formatRange(range: DateRange | undefined, fallback: string) {
-  if (range?.from && range?.to) {
-    return `${formatDateShort(range.from)} to ${formatDateShort(range.to)}`
-  }
-  if (range?.from) return formatDateShort(range.from)
-  return fallback
 }
 
 function FormattedDate({ date }: { date: Date }) {
@@ -155,25 +297,13 @@ function DateTimePresetContent() {
   const [minute, setMinute] = useState("34")
   const [period, setPeriod] = useState("AM")
 
-  const setToNow = useCallback(() => {
-    const now = new Date()
-    setDate(now)
-    setMonth(now)
-    let h = now.getHours()
-    const m = now.getMinutes()
-    const p = h >= 12 ? "PM" : "AM"
-    h = h % 12 || 12
-    setHour(String(h).padStart(2, "0"))
-    setMinute(String(m).padStart(2, "0"))
-    setPeriod(p)
-  }, [])
-
   return (
     <div className="flex w-max">
-      <div className="flex flex-col items-start gap-2 border-r border-border px-3 py-3">
+      <div className="flex flex-col items-start gap-px border-r border-border p-1">
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
+          className="text-sm"
           onClick={() => {
             const d = addDays(new Date(), 1)
             setDate(d)
@@ -183,8 +313,9 @@ function DateTimePresetContent() {
           Tomorrow
         </Button>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
+          className="text-sm"
           onClick={() => {
             const d = addDays(new Date(), 7)
             setDate(d)
@@ -195,129 +326,17 @@ function DateTimePresetContent() {
         </Button>
       </div>
       <div className="flex flex-col">
-        <Calendar
+        <MonthYearCalendar
           mode="single"
           selected={date}
           onSelect={setDate}
           month={month}
           onMonthChange={setMonth}
-          className="w-full min-w-[280px] border-0 shadow-none [--cell-size:1.5rem] [&_tbody>tr]:mt-1.5"
-          classNames={{
-            nav: "pointer-events-none absolute inset-x-0 top-0 flex w-full items-center justify-end gap-1 [&>*]:pointer-events-auto",
-          }}
-          components={{
-            MonthCaption: () => {
-              const monthItems = monthNames.map((m) => ({
-                label: m,
-                value: m,
-              }))
-              const yearItems = Array.from({ length: 14 }, (_, i) => {
-                const y = String(2017 + i)
-                return { label: y, value: y }
-              })
-              return (
-                <div className="flex h-(--cell-size) items-center gap-1.5">
-                  <Select
-                    items={monthItems}
-                    value={monthNames[month.getMonth()]}
-                    onValueChange={(v) => {
-                      if (!v) return
-                      const next = new Date(month)
-                      next.setMonth(monthNames.indexOf(v))
-                      setMonth(next)
-                    }}
-                  >
-                    <SelectTrigger variant="ghost" size="sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {monthItems.map((m) => (
-                          <SelectItem key={m.value} value={m.value}>
-                            {m.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    items={yearItems}
-                    value={String(month.getFullYear())}
-                    onValueChange={(v) => {
-                      if (!v) return
-                      const next = new Date(month)
-                      next.setFullYear(Number(v))
-                      setMonth(next)
-                    }}
-                  >
-                    <SelectTrigger variant="ghost" size="sm">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectGroup>
-                        {yearItems.map((y) => (
-                          <SelectItem key={y.value} value={y.value}>
-                            {y.label}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                </div>
-              )
-            },
-            Nav: ({
-              className: navClassName,
-              onPreviousClick,
-              onNextClick,
-              previousMonth,
-              nextMonth,
-            }) => (
-              <nav className={navClassName}>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={(e) => onPreviousClick?.(e)}
-                  disabled={!previousMonth}
-                  aria-label="Previous month"
-                >
-                  <ChevronLeftIcon />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  onClick={() => {
-                    const today = new Date()
-                    setDate(today)
-                    setMonth(today)
-                  }}
-                >
-                  Today
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={(e) => onNextClick?.(e)}
-                  disabled={!nextMonth}
-                  aria-label="Next month"
-                >
-                  <ChevronRightIcon />
-                </Button>
-              </nav>
-            ),
-          }}
+          className="w-full border-0 shadow-none [--cell-size:1.5rem] [&_tbody>tr]:mt-1.5"
         />
-        <div className="flex items-center justify-between border-t px-4 py-3">
-          <span className="text-base leading-base font-medium tracking-normal text-foreground">
-            Time
-          </span>
-          <Button variant="ghost" size="sm" onClick={setToNow}>
-            Now
-          </Button>
-        </div>
-        <div className="flex items-center gap-2 px-4 pb-3">
+        <div className="flex items-center gap-1 border-t p-2">
           <Select value={hour} onValueChange={(v) => v && setHour(v)}>
-            <SelectTrigger variant="subtle" size="sm" className="w-full">
+            <SelectTrigger variant="subtle" size="xs" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -334,7 +353,7 @@ function DateTimePresetContent() {
             </SelectContent>
           </Select>
           <Select value={minute} onValueChange={(v) => v && setMinute(v)}>
-            <SelectTrigger variant="subtle" size="sm" className="w-full">
+            <SelectTrigger variant="subtle" size="xs" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false} className="max-h-60">
@@ -351,7 +370,7 @@ function DateTimePresetContent() {
             </SelectContent>
           </Select>
           <Select value={period} onValueChange={(v) => v && setPeriod(v)}>
-            <SelectTrigger variant="subtle" size="sm" className="w-16">
+            <SelectTrigger variant="subtle" size="xs" className="w-16">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -387,38 +406,23 @@ function DateRangeContent({
         className="border-0 shadow-none [--cell-size:1.5rem]"
         classNames={{
           months:
-            "relative flex flex-row items-start [&>div+div]:border-l [&>div+div]:border-border [&>div]:py-3 [&>div]:px-3.5",
-          nav: "absolute inset-x-3.5 top-3 flex w-auto items-center justify-between gap-1",
+            "relative flex flex-row items-stretch [&>div+div]:border-l [&>div+div]:border-border [&>div]:py-2 [&>div]:px-2",
+          nav: "absolute inset-x-2 top-2 flex w-auto items-center justify-between gap-1",
           root: "w-fit p-0!",
         }}
       />
-      <div className="flex items-center justify-between border-t border-border px-4 py-3.5">
-        <div className="flex items-center gap-2 text-sm">
-          <span className="h-7 rounded-md bg-secondary px-2 py-1.5 text-base leading-base font-normal tracking-normal text-secondary-foreground">
-            {formatDateShort(range?.from) || (
-              <span className="text-card-foreground">Start date</span>
-            )}
-          </span>
-          <span className="text-base leading-base font-normal tracking-normal text-secondary-foreground">
-            to
-          </span>
-          <span className="h-7 rounded-md bg-secondary px-2 py-1.5 text-base leading-base font-normal tracking-normal text-secondary-foreground">
-            {formatDateShort(range?.to) || (
-              <span className="text-card-foreground">End date</span>
-            )}
-          </span>
-        </div>
+      <div className="flex items-center justify-end border-t border-border p-2">
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
-            size="sm"
+            size="xs"
             onClick={() => {
               onRangeChange(undefined)
             }}
           >
             Cancel
           </Button>
-          <Button size="sm" onClick={onConfirm}>
+          <Button size="xs" onClick={onConfirm}>
             Set date
           </Button>
         </div>
@@ -432,10 +436,11 @@ function PresetsContent() {
   const [month, setMonth] = useState(new Date())
   return (
     <div className="flex w-max">
-      <div className="flex flex-col items-start gap-2 border-r border-border px-3 py-3">
+      <div className="flex flex-col items-start gap-px border-r border-border p-1">
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
+          className="text-sm"
           onClick={() => {
             const d = addDays(new Date(), 1)
             setDate(d)
@@ -445,8 +450,9 @@ function PresetsContent() {
           Tomorrow
         </Button>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
+          className="text-sm"
           onClick={() => {
             const d = addDays(new Date(), 7)
             setDate(d)
@@ -456,128 +462,14 @@ function PresetsContent() {
           Next week
         </Button>
       </div>
-      <Calendar
+      <MonthYearCalendar
         mode="single"
         selected={date}
         onSelect={setDate}
         month={month}
         onMonthChange={setMonth}
-        className="w-full min-w-[280px] border-0 shadow-none [--cell-size:1.5rem] [&_tbody>tr]:mt-1.5"
-        classNames={{
-          nav: "pointer-events-none absolute inset-x-0 top-0 flex w-full items-center justify-end gap-1 [&>*]:pointer-events-auto",
-        }}
-        components={{
-          MonthCaption: () => {
-            const monthItems = monthNames.map((m) => ({ label: m, value: m }))
-            const yearItems = Array.from({ length: 14 }, (_, i) => {
-              const y = String(2017 + i)
-              return { label: y, value: y }
-            })
-            return (
-              <div className="flex h-(--cell-size) items-center gap-1.5">
-                <Select
-                  items={monthItems}
-                  value={monthNames[month.getMonth()]}
-                  onValueChange={(v) => {
-                    if (!v) return
-                    const next = new Date(month)
-                    next.setMonth(monthNames.indexOf(v))
-                    setMonth(next)
-                  }}
-                >
-                  <SelectTrigger variant="ghost" size="sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {monthItems.map((m) => (
-                        <SelectItem key={m.value} value={m.value}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <Select
-                  items={yearItems}
-                  value={String(month.getFullYear())}
-                  onValueChange={(v) => {
-                    if (!v) return
-                    const next = new Date(month)
-                    next.setFullYear(Number(v))
-                    setMonth(next)
-                  }}
-                >
-                  <SelectTrigger variant="ghost" size="sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {yearItems.map((y) => (
-                        <SelectItem key={y.value} value={y.value}>
-                          {y.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </div>
-            )
-          },
-          Nav: ({
-            className: navClassName,
-            onPreviousClick,
-            onNextClick,
-            previousMonth,
-            nextMonth,
-          }) => (
-            <nav className={navClassName}>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={(e) => onPreviousClick?.(e)}
-                disabled={!previousMonth}
-                aria-label="Previous month"
-              >
-                <ChevronLeftIcon />
-              </Button>
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => {
-                  const today = new Date()
-                  setDate(today)
-                  setMonth(today)
-                }}
-              >
-                Today
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                onClick={(e) => onNextClick?.(e)}
-                disabled={!nextMonth}
-                aria-label="Next month"
-              >
-                <ChevronRightIcon />
-              </Button>
-            </nav>
-          ),
-        }}
+        className="w-full border-0 shadow-none [--cell-size:1.5rem] [&_tbody>tr]:mt-1.5"
       />
-    </div>
-  )
-}
-
-function ControlledDatePickerDemo() {
-  const [date, setDate] = useState<Date>(new Date(2023, 4, 3))
-
-  return (
-    <div className="flex items-center gap-3">
-      <DatePicker value={date} onValueChange={setDate} />
-      <p className="text-sm text-muted-foreground">
-        Selected: {format(date, "PPP")}
-      </p>
     </div>
   )
 }
@@ -638,10 +530,10 @@ export default function CalendarPage() {
             }
           />
           <PopoverContent className="w-auto p-0" align="start" sideOffset={4}>
-            <Calendar
+            <MonthYearCalendar
               mode="single"
               selected={singleDate}
-              onSelect={(d) => setSingleDate(d)}
+              onSelect={setSingleDate}
               className="border-0 shadow-none [--cell-size:1.5rem]"
             />
           </PopoverContent>
@@ -659,7 +551,7 @@ export default function CalendarPage() {
           }
         >
           {() => (
-            <Calendar
+            <MonthYearCalendar
               mode="multiple"
               selected={multipleDates}
               onSelect={setMultipleDates}
@@ -676,7 +568,7 @@ export default function CalendarPage() {
           buttonContent={singleDate ? format(singleDate, "PPP") : "Pick a date"}
         >
           {({ close }) => (
-            <Calendar
+            <MonthYearCalendar
               mode="single"
               selected={singleDate}
               onSelect={(d) => {
@@ -701,18 +593,6 @@ export default function CalendarPage() {
         <CalendarPopover buttonContent="Pick date & time">
           {() => <DateTimePresetContent />}
         </CalendarPopover>
-      </div>
-
-      {/* Date Picker with Presets + Prev/Next */}
-      <div className="flex flex-col gap-4">
-        <SectionTitle>Date Picker with Presets + Prev/Next</SectionTitle>
-        <DatePicker />
-      </div>
-
-      {/* Date Picker — Controlled */}
-      <div className="flex flex-col gap-4">
-        <SectionTitle>Date Picker — Controlled</SectionTitle>
-        <ControlledDatePickerDemo />
       </div>
 
       {/* Presets */}
@@ -742,32 +622,6 @@ export default function CalendarPage() {
         </CalendarPopover>
       </div>
 
-      {/* Date Range Picker with Prev/Next */}
-      <div className="flex flex-col gap-4">
-        <SectionTitle>Date Range Picker with Prev/Next</SectionTitle>
-        <DateRangePicker
-          defaultValue={{
-            from: new Date(2023, 4, 3),
-            to: new Date(2023, 4, 11),
-          }}
-        />
-      </div>
-
-      {/* Date Range Picker — future booking */}
-      <div className="flex flex-col gap-4">
-        <SectionTitle>Date Range Picker — future booking</SectionTitle>
-        <DateRangePicker
-          disableFuture={false}
-          defaultValue={{
-            from: new Date(),
-            to: addDays(new Date(), 6),
-          }}
-        />
-        <p className="text-sm text-muted-foreground">
-          Next isn&apos;t capped at today — useful for booking flows.
-        </p>
-      </div>
-
       {/* Booked Dates */}
       <div className="flex flex-col gap-4">
         <SectionTitle>Booked Dates</SectionTitle>
@@ -775,7 +629,7 @@ export default function CalendarPage() {
           buttonContent={bookedDate ? format(bookedDate, "PPP") : "Pick a date"}
         >
           {({ close }) => (
-            <Calendar
+            <MonthYearCalendar
               mode="single"
               selected={bookedDate}
               onSelect={(d) => {
@@ -798,7 +652,7 @@ export default function CalendarPage() {
           }
         >
           {({ close }) => (
-            <Calendar
+            <MonthYearCalendar
               mode="single"
               selected={largeCellDate}
               onSelect={(d) => {
@@ -820,7 +674,7 @@ export default function CalendarPage() {
           }
         >
           {({ close }) => (
-            <Calendar
+            <MonthYearCalendar
               mode="single"
               selected={weekNumDate}
               onSelect={(d) => {
@@ -843,7 +697,7 @@ export default function CalendarPage() {
           }
         >
           {({ close }) => (
-            <Calendar
+            <MonthYearCalendar
               mode="single"
               selected={noOutsideDate}
               onSelect={(d) => {
@@ -866,7 +720,7 @@ export default function CalendarPage() {
           }
         >
           {({ close }) => (
-            <Calendar
+            <MonthYearCalendar
               mode="single"
               selected={weekdayDate}
               onSelect={(d) => {

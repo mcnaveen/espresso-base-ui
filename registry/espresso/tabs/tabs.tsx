@@ -108,11 +108,13 @@ function TabsList({
 }
 
 const tabsTriggerVariants = cva([
-  "relative inline-flex flex-1 items-center justify-center gap-2 rounded-[7px] text-base leading-base tracking-normal whitespace-nowrap text-accent-foreground transition-all group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "relative inline-flex flex-1 items-center justify-center gap-2 rounded-normal text-base leading-base tracking-normal whitespace-nowrap text-accent-foreground transition-all group-data-vertical/tabs:w-full group-data-vertical/tabs:flex-none group-data-vertical/tabs:justify-start hover:text-foreground focus-visible:z-[2] focus-visible:[outline:2px_solid_#c9c9c9e5] group-data-[variant=default]/tabs-list:focus-visible:[outline-offset:-1px] disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-1 has-data-[icon=inline-start]:pl-1 aria-disabled:pointer-events-none aria-disabled:opacity-50 dark:focus-visible:[outline:2px_solid_#575757e5] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   // active text color (background handled by TabsIndicator)
   "z-[1] data-active:text-foreground",
+  // line variant is flat — square corners so the focus outline has no radius
+  "group-data-[variant=line]/tabs-list:rounded-none",
   // browser variant keeps per-tab border structure for its unique look
-  "group-data-[variant=browser]/tabs-list:h-full group-data-[variant=browser]/tabs-list:border-transparent group-data-[variant=browser]/tabs-list:bg-transparent group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:-bottom-px group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:rounded-b-none! group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:border-x group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:border-t group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:-right-px group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:rounded-r-none! group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:border-y group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:border-l",
+  "group-data-[variant=browser]/tabs-list:border-transparent group-data-[variant=browser]/tabs-list:bg-transparent group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:-bottom-px group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:h-full! group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:rounded-b-none! group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:border-x group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:border-t group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:rounded-r-none! group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:border-y group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:border-l",
   // size sm
   "group-data-[size=sm]/tabs-list:h-6.5 group-data-[size=sm]/tabs-list:px-2 group-data-[size=sm]/tabs-list:py-1.25 group-data-[size=sm]/tabs-list:font-normal",
   // size default
@@ -134,16 +136,20 @@ function TabsIndicator({ className, ...props }: TabsPrimitive.Indicator.Props) {
     <TabsPrimitive.Indicator
       data-slot="tabs-indicator"
       className={cn(
-        "absolute rounded-[7px] transition-all duration-200 ease-out",
+        "absolute rounded-normal transition-all duration-200 ease-out",
         // horizontal
         "group-data-horizontal/tabs:top-[var(--active-tab-top)] group-data-horizontal/tabs:left-[var(--active-tab-left)] group-data-horizontal/tabs:h-[var(--active-tab-height)] group-data-horizontal/tabs:w-[var(--active-tab-width)]",
         // vertical
         "group-data-vertical/tabs:top-[var(--active-tab-top)] group-data-vertical/tabs:left-[var(--active-tab-left)] group-data-vertical/tabs:h-[var(--active-tab-height)] group-data-vertical/tabs:w-[var(--active-tab-width)]",
         // variant-specific styling
-        "group-data-[variant=default]/tabs-list:bg-surface group-data-[variant=default]/tabs-list:shadow-6xs",
-        "group-data-[variant=ghost]/tabs-list:bg-surface group-data-[variant=ghost]/tabs-list:shadow-6xs",
+        "group-data-[variant=default]/tabs-list:bg-surface group-data-[variant=default]/tabs-list:shadow-elevation-base",
+        "group-data-[variant=ghost]/tabs-list:bg-surface group-data-[variant=ghost]/tabs-list:shadow-elevation-base",
         "group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:shadow-none group-data-[variant=line]/tabs-list:group-data-horizontal/tabs:top-auto group-data-[variant=line]/tabs-list:group-data-horizontal/tabs:-bottom-px group-data-[variant=line]/tabs-list:group-data-horizontal/tabs:h-px group-data-[variant=line]/tabs-list:group-data-horizontal/tabs:rounded-none group-data-[variant=line]/tabs-list:group-data-horizontal/tabs:bg-foreground group-data-[variant=line]/tabs-list:group-data-vertical/tabs:right-[-1px] group-data-[variant=line]/tabs-list:group-data-vertical/tabs:left-auto group-data-[variant=line]/tabs-list:group-data-vertical/tabs:w-px group-data-[variant=line]/tabs-list:group-data-vertical/tabs:bg-foreground",
         "group-data-[variant=browser]/tabs-list:border-border group-data-[variant=browser]/tabs-list:bg-background group-data-[variant=browser]/tabs-list:shadow-none group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:rounded-b-none group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:border-x group-data-[variant=browser]/tabs-list:group-data-horizontal/tabs:border-t group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:rounded-r-none group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:border-y group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:border-l",
+        // vertical browser: anchor the right edge to the list border instead of
+        // left+width — the measured --active-tab-* vars lose subpixel precision,
+        // which can leave a sliver of the divider visible across the open edge
+        "group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:right-[-1px] group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:left-0 group-data-[variant=browser]/tabs-list:group-data-vertical/tabs:w-auto!",
         className
       )}
       {...props}
@@ -155,7 +161,10 @@ function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
     <TabsPrimitive.Panel
       data-slot="tabs-content"
-      className={cn("flex-1 text-sm outline-none", className)}
+      className={cn(
+        "flex-1 text-sm text-secondary-foreground outline-none",
+        className
+      )}
       {...props}
     />
   )

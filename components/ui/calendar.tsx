@@ -5,7 +5,6 @@ import {
   DayPicker,
   getDefaultClassNames,
   type DayButton,
-  type Locale,
 } from "react-day-picker"
 
 import { cn } from "@/lib/utils"
@@ -38,7 +37,7 @@ function Calendar({
     <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn(
-        "group/calendar rounded-xl bg-popover p-2 shadow-5xl [--cell-radius:var(--radius-xs)] [--cell-size:calc(var(--spacing)*6)] in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent",
+        "group/calendar p-2 [--cell-radius:var(--radius-xs)] [--cell-size:calc(var(--spacing)*6)] in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent",
         String.raw`rtl:**:[.rdp-button\_next>svg]:rotate-180`,
         String.raw`rtl:**:[.rdp-button\_previous>svg]:rotate-180`,
         className
@@ -59,11 +58,14 @@ function Calendar({
           defaultClassNames.months
         ),
         month: cn(
-          "flex w-full flex-col gap-4 overflow-visible",
+          "flex w-full flex-col gap-1.5 overflow-visible",
           defaultClassNames.month
         ),
         nav: cn(
-          "absolute inset-x-0 top-0 flex w-full items-center justify-end gap-1",
+          "absolute inset-x-0 top-0 flex w-full items-center gap-1",
+          // multi-month: prev sits at the far left corner, next at the far
+          // right; single month keeps both grouped at the right
+          (props.numberOfMonths ?? 1) > 1 ? "justify-between" : "justify-end",
           defaultClassNames.nav
         ),
         button_previous: cn(
@@ -82,7 +84,7 @@ function Calendar({
           defaultClassNames.month_caption
         ),
         dropdowns: cn(
-          "flex h-(--cell-size) w-full items-center justify-center gap-1.5 text-sm font-medium",
+          "flex h-(--cell-size) w-full items-center justify-start gap-1.5 pl-1.5 text-sm font-medium",
           defaultClassNames.dropdowns
         ),
         dropdown_root: cn(
@@ -108,7 +110,7 @@ function Calendar({
           defaultClassNames.weekdays
         ),
         weekday: cn(
-          "rounded-(--cell-radius) text-center text-xs leading-base font-medium tracking-normal text-card-foreground select-none",
+          "flex size-(--cell-size) items-center justify-center rounded-(--cell-radius) text-xs leading-base font-normal tracking-normal text-card-foreground select-none",
           defaultClassNames.weekday
         ),
         week: cn(
@@ -183,9 +185,7 @@ function Calendar({
             <ChevronDownIcon className={cn("size-4", className)} {...props} />
           )
         },
-        DayButton: ({ ...props }) => (
-          <CalendarDayButton locale={locale} {...props} />
-        ),
+        DayButton: ({ ...props }) => <CalendarDayButton {...props} />,
         WeekNumber: ({ children, ...props }) => {
           return (
             <td {...props}>
@@ -206,9 +206,8 @@ function CalendarDayButton({
   className,
   day,
   modifiers,
-  locale,
   ...props
-}: React.ComponentProps<typeof DayButton> & { locale?: Partial<Locale> }) {
+}: React.ComponentProps<typeof DayButton>) {
   const defaultClassNames = getDefaultClassNames()
 
   const ref = React.useRef<HTMLButtonElement>(null)
@@ -220,7 +219,9 @@ function CalendarDayButton({
     <Button
       variant="ghost"
       size="icon"
-      data-day={day.date.toLocaleDateString(locale?.code)}
+      // locale-independent (YYYY-MM-DD): toLocaleDateString differs between
+      // the server and browser locale, causing hydration mismatches
+      data-day={`${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, "0")}-${String(day.date.getDate()).padStart(2, "0")}`}
       data-selected-single={
         modifiers.selected &&
         !modifiers.range_start &&
@@ -231,16 +232,16 @@ function CalendarDayButton({
       data-range-end={modifiers.range_end}
       data-range-middle={modifiers.range_middle}
       className={cn(
-        "relative isolate z-10 flex h-[var(--cell-size)]! w-[var(--cell-size)]! flex-col gap-1 rounded-(--cell-radius) border-0 text-xs leading-base font-medium tracking-normal focus-visible:relative focus-visible:z-10 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "relative isolate z-10 flex h-[var(--cell-size)]! w-[var(--cell-size)]! flex-col gap-1 rounded-(--cell-radius) border-0 text-xs leading-base font-normal tracking-normal focus-visible:relative focus-visible:z-10 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
         // range start
-        "data-[range-start=true]:rounded-(--cell-radius) data-[range-start=true]:bg-primary data-[range-start=true]:text-primary-foreground",
+        "data-[range-start=true]:rounded-(--cell-radius) data-[range-start=true]:bg-primary data-[range-start=true]:text-primary-foreground data-[range-start=true]:hover:bg-primary!",
         "data-[range-start=true]:after:absolute data-[range-start=true]:after:top-0 data-[range-start=true]:after:-right-0.5 data-[range-start=true]:after:bottom-0 data-[range-start=true]:after:-z-10 data-[range-start=true]:after:w-0.5 data-[range-start=true]:after:bg-muted data-[range-start=true]:after:content-['']",
         // range middle
-        "data-[range-middle=true]:rounded-none data-[range-middle=true]:bg-muted data-[range-middle=true]:text-foreground",
+        "data-[range-middle=true]:rounded-none data-[range-middle=true]:bg-muted data-[range-middle=true]:text-foreground data-[range-middle=true]:hover:bg-muted!",
         "data-[range-middle=true]:before:absolute data-[range-middle=true]:before:top-0 data-[range-middle=true]:before:bottom-0 data-[range-middle=true]:before:-left-0.5 data-[range-middle=true]:before:-z-10 data-[range-middle=true]:before:w-0.5 data-[range-middle=true]:before:bg-muted data-[range-middle=true]:before:content-['']",
         "data-[range-middle=true]:after:absolute data-[range-middle=true]:after:top-0 data-[range-middle=true]:after:-right-0.5 data-[range-middle=true]:after:bottom-0 data-[range-middle=true]:after:-z-10 data-[range-middle=true]:after:w-0.5 data-[range-middle=true]:after:bg-muted data-[range-middle=true]:after:content-['']",
         // range end
-        "data-[range-end=true]:rounded-(--cell-radius) data-[range-end=true]:bg-primary data-[range-end=true]:text-primary-foreground",
+        "data-[range-end=true]:rounded-(--cell-radius) data-[range-end=true]:bg-primary data-[range-end=true]:text-primary-foreground data-[range-end=true]:hover:bg-primary!",
         "data-[range-end=true]:before:absolute data-[range-end=true]:before:top-0 data-[range-end=true]:before:bottom-0 data-[range-end=true]:before:-left-0.5 data-[range-end=true]:before:-z-10 data-[range-end=true]:before:w-0.5 data-[range-end=true]:before:bg-muted data-[range-end=true]:before:content-['']",
         // hide pseudo-element bridges at row edges and round the range edges
         "[:first-child>&]:rounded-l-(--cell-radius) [:first-child>&]:before:hidden",
@@ -250,7 +251,7 @@ function CalendarDayButton({
         "[&[data-range-start=true][data-range-end=true]]:before:hidden",
         "[&[data-range-start=true][data-range-end=true]]:after:hidden",
         // single selected
-        "data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground",
+        "data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground data-[selected-single=true]:hover:bg-primary!",
         "[&>span]:text-xs [&>span]:opacity-70",
         defaultClassNames.day,
         className

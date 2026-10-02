@@ -160,25 +160,6 @@ export default function AlertDialogPage() {
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          <AlertDialog>
-            <AlertDialogTrigger render={<Button variant="outline">Large</Button>} />
-            <AlertDialogContent size="lg">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Terminate all sessions?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Every device currently signed in, including this one, will
-                  be logged out immediately. You&apos;ll need to sign back in
-                  everywhere.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction render={<Button variant="destructive" />}>
-                  Terminate all
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
         </div>
       </div>
     </div>

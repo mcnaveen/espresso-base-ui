@@ -13,19 +13,28 @@ export default function InputPage() {
       {/* Outline — Sizes */}
       <div className="flex max-w-sm flex-col gap-4">
         <SectionTitle>Outline — Sizes</SectionTitle>
+        <Input variant="outline" size="xs" placeholder="Extra Small (xs)" />
         <Input variant="outline" size="sm" placeholder="Small (sm)" />
         <Input variant="outline" size="md" placeholder="Medium (md)" />
         <Input variant="outline" size="lg" placeholder="Large (lg)" />
-        <Input variant="outline" size="xl" placeholder="Extra Large (xl)" />
       </div>
 
       {/* Subtle — Sizes */}
       <div className="flex max-w-sm flex-col gap-4">
         <SectionTitle>Subtle — Sizes</SectionTitle>
+        <Input variant="subtle" size="xs" placeholder="Extra Small (xs)" />
         <Input variant="subtle" size="sm" placeholder="Small (sm)" />
         <Input variant="subtle" size="md" placeholder="Medium (md)" />
         <Input variant="subtle" size="lg" placeholder="Large (lg)" />
-        <Input variant="subtle" size="xl" placeholder="Extra Large (xl)" />
+      </div>
+
+      {/* Ghost — Sizes */}
+      <div className="flex max-w-sm flex-col gap-4">
+        <SectionTitle>Ghost — Sizes</SectionTitle>
+        <Input variant="ghost" size="xs" placeholder="Extra Small (xs)" />
+        <Input variant="ghost" size="sm" placeholder="Small (sm)" />
+        <Input variant="ghost" size="md" placeholder="Medium (md)" />
+        <Input variant="ghost" size="lg" placeholder="Large (lg)" />
       </div>
 
       {/* Outline — States */}
@@ -46,6 +55,15 @@ export default function InputPage() {
         <Input variant="subtle" disabled defaultValue="Disabled with value" />
       </div>
 
+      {/* Ghost — States */}
+      <div className="flex max-w-sm flex-col gap-4">
+        <SectionTitle>Ghost — States</SectionTitle>
+        <Input variant="ghost" placeholder="Default" />
+        <Input variant="ghost" defaultValue="With value" />
+        <Input variant="ghost" disabled placeholder="Disabled" />
+        <Input variant="ghost" disabled defaultValue="Disabled with value" />
+      </div>
+
       {/* Outline — Data States */}
       <div className="flex max-w-sm flex-col gap-4">
         <SectionTitle>Outline — Data States</SectionTitle>
@@ -60,6 +78,14 @@ export default function InputPage() {
         <Input variant="subtle" data-valid="true" defaultValue="Valid" />
         <Input variant="subtle" data-invalid="true" defaultValue="Invalid" />
         <Input variant="subtle" data-filled="true" defaultValue="Filled" />
+      </div>
+
+      {/* Ghost — Data States */}
+      <div className="flex max-w-sm flex-col gap-4">
+        <SectionTitle>Ghost — Data States</SectionTitle>
+        <Input variant="ghost" data-valid="true" defaultValue="Valid" />
+        <Input variant="ghost" data-invalid="true" defaultValue="Invalid" />
+        <Input variant="ghost" data-filled="true" defaultValue="Filled" />
       </div>
 
       {/* Invalid via Field */}

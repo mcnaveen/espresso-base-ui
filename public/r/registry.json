@@ -14,7 +14,9 @@
         "provider": "google",
         "import": "Inter",
         "variable": "--font-sans",
-        "subsets": ["latin"],
+        "subsets": [
+          "latin"
+        ],
         "dependency": "@fontsource-variable/inter"
       }
     },
@@ -28,7 +30,8 @@
         "shadcn"
       ],
       "registryDependencies": [
-        "https://espresso-base-ui.vercel.app/r/espresso-font.json"
+        "https://espresso-base-ui.vercel.app/r/espresso-font.json",
+        "https://espresso-base-ui.vercel.app/r/button.json"
       ],
       "files": [
         {
@@ -36,6 +39,10 @@
           "type": "registry:file",
           "target": "~/app/globals.css"
         }
+      ],
+      "dependencies": [
+        "tw-animate-css",
+        "shadcn"
       ]
     },
     {
@@ -224,6 +231,25 @@
     },
     {
       "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "drawer",
+      "type": "registry:ui",
+      "title": "Drawer",
+      "description": "Swipeable drawer with snap points, built on Base UI.",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/drawer/drawer.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
       "name": "dropdown-menu",
       "type": "registry:ui",
       "title": "Dropdown Menu",
@@ -277,6 +303,22 @@
       ],
       "registryDependencies": [
         "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "sub-header",
+      "type": "registry:ui",
+      "title": "Sub Header",
+      "description": "A secondary toolbar row with left and right slots for filters, titles and view controls.",
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/sub-header/sub-header.tsx",
+          "type": "registry:ui"
+        }
       ]
     },
     {
@@ -384,9 +426,7 @@
       "title": "Notification",
       "description": "Toast notification with variants and action types.",
       "dependencies": [
-        "class-variance-authority",
-        "sonner",
-        "lucide-react"
+        "class-variance-authority"
       ],
       "files": [
         {
@@ -396,7 +436,8 @@
       ],
       "registryDependencies": [
         "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
-        "https://espresso-base-ui.vercel.app/r/button.json"
+        "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/toast.json"
       ]
     },
     {
@@ -597,6 +638,27 @@
     },
     {
       "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "toast",
+      "type": "registry:ui",
+      "title": "Toast",
+      "description": "Toast notifications built on Base UI with success, info, warning, error, and loading types.",
+      "dependencies": [
+        "@base-ui/react",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/toast/toast.tsx",
+          "type": "registry:ui"
+        }
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json"
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
       "name": "spinner",
       "type": "registry:ui",
       "title": "Spinner",
@@ -732,13 +794,35 @@
       "name": "card",
       "type": "registry:ui",
       "title": "Card",
-      "description": "A card container component.",
+      "description": "A card container component with sm, md, lg, and xl size variants.",
+      "dependencies": [
+        "class-variance-authority"
+      ],
       "registryDependencies": [
         "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
       ],
       "files": [
         {
           "path": "registry/espresso/card/card.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "chart",
+      "type": "registry:ui",
+      "title": "Chart",
+      "description": "Chart components (container, tooltip, legend) built on Recharts.",
+      "dependencies": [
+        "recharts"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/chart/chart.tsx",
           "type": "registry:ui"
         }
       ]
@@ -897,6 +981,254 @@
       "files": [
         {
           "path": "registry/espresso/input-otp/input-otp.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "mobile-shell",
+      "type": "registry:ui",
+      "title": "Mobile Shell",
+      "description": "Mobile app frame with pinned header, scrolling content, and bottom tab bar.",
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/mobile-shell/mobile-shell.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "message",
+      "type": "registry:ui",
+      "title": "Message",
+      "description": "Chat message row layout with avatar, content, and footer parts.",
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/message/message.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "bubble",
+      "type": "registry:ui",
+      "title": "Bubble",
+      "description": "Chat bubble surface used inside Message content.",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/bubble/bubble.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "attachment",
+      "type": "registry:ui",
+      "title": "Attachment",
+      "description": "File chip for uploads, previews, and link cards with upload states.",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/attachment/attachment.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "color-swatch",
+      "type": "registry:ui",
+      "title": "Color Swatch",
+      "description": "Circular chip previewing a CSS color, with transparency checkerboard and selected state.",
+      "dependencies": [
+        "class-variance-authority",
+        "lucide-react",
+        "radix-ui"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/color-swatch/color-swatch.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "message-scroller",
+      "type": "registry:ui",
+      "title": "Message Scroller",
+      "description": "Auto-scrolling chat viewport that pins to the latest message.",
+      "dependencies": [
+        "@shadcn/react",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/message-scroller/message-scroller.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "file-upload",
+      "type": "registry:ui",
+      "title": "File Upload",
+      "description": "Headless file picker with drag-and-drop, validation, and upload progress.",
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/file-upload/file-upload.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "registry/espresso/hooks/use-as-ref.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-as-ref.ts"
+        },
+        {
+          "path": "registry/espresso/hooks/use-lazy-ref.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-lazy-ref.ts"
+        }
+      ]
+    },
+    {
+      "$schema": "https://ui.shadcn.com/schema/registry-item.json",
+      "name": "color-picker",
+      "type": "registry:ui",
+      "title": "Color Picker",
+      "description": "Popover color picker with saturation area, hue and alpha sliders, and an eye dropper.",
+      "dependencies": [
+        "class-variance-authority",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/input.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/color-picker/color-picker.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "registry/espresso/visually-hidden-input/visually-hidden-input.tsx",
+          "type": "registry:component",
+          "target": "components/visually-hidden-input.tsx"
+        },
+        {
+          "path": "registry/espresso/hooks/use-as-ref.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-as-ref.ts"
+        },
+        {
+          "path": "registry/espresso/hooks/use-lazy-ref.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-lazy-ref.ts"
+        },
+        {
+          "path": "registry/espresso/hooks/use-isomorphic-layout-effect.ts",
+          "type": "registry:hook",
+          "target": "hooks/use-isomorphic-layout-effect.ts"
+        },
+        {
+          "path": "registry/espresso/lib/compose-refs.ts",
+          "type": "registry:lib",
+          "target": "lib/compose-refs.ts"
+        }
+      ]
+    },
+    {
+      "name": "accordion",
+      "type": "registry:ui",
+      "title": "Accordion",
+      "description": "Vertically stacked disclosure sections built on Base UI.",
+      "dependencies": [
+        "@base-ui/react",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/accordion/accordion.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "questionnaire",
+      "type": "registry:ui",
+      "title": "Questionnaire",
+      "description": "Multi-step form flow with choices, shortcuts and validation, built on @shadcn/react.",
+      "dependencies": [
+        "@shadcn/react",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/questionnaire/questionnaire.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "sortable",
+      "type": "registry:ui",
+      "title": "Sortable",
+      "description": "Drag-and-drop reordering for lists, grids and nested groups, built on dnd-kit with Base UI composition.",
+      "dependencies": [
+        "@base-ui/react",
+        "@dnd-kit/core",
+        "@dnd-kit/sortable",
+        "@dnd-kit/utilities"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/sortable/sortable.tsx",
           "type": "registry:ui"
         }
       ]

@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  Menu,
   Bell,
   CalendarDays,
   ChevronDown,
@@ -109,7 +110,19 @@ import { DataGridFilterMenu } from "@/components/data-grid/data-grid-filter-menu
 import { DataGridSortMenu } from "@/components/data-grid/data-grid-sort-menu"
 import { DataGridRowHeightMenu } from "@/components/data-grid/data-grid-row-height-menu"
 import { useDataGrid } from "@/hooks/use-data-grid"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileState } from "@/hooks/use-mobile"
+import {
+  Drawer,
+  DrawerContent,
+  DrawerTitle,
+} from "@/components/ui/drawer"
+import {
+  MobileNav,
+  MobileNavItem,
+  MobileShell,
+  MobileShellContent,
+  MobileShellHeader,
+} from "@/components/ui/mobile-shell"
 import { Checkbox } from "@/components/ui-radix/checkbox"
 import { Button as RadixButton } from "@/components/ui-radix/button"
 import { TooltipProvider } from "@/components/ui-radix/tooltip"
@@ -537,6 +550,12 @@ function CrmSidebar() {
                       </div>
                       CRM Data Grid
                     </DropdownMenuItem>
+                    <DropdownMenuItem render={<a href="/crm-data-grid-base" />}>
+                      <div className="flex size-7 items-center justify-center rounded-md text-white">
+                        <img src="/images/svg/logo-crm.svg" alt="CRM" />
+                      </div>
+                      CRM Data Grid Base
+                    </DropdownMenuItem>
                     <DropdownMenuItem render={<a href="/helpdesk" />}>
                       <div className="flex size-7 items-center justify-center rounded-md text-white">
                         <img
@@ -832,10 +851,33 @@ function CrmSidebar() {
   )
 }
 
+const mobileSidebarItems = [
+  { label: "Search", icon: Search },
+  { label: "Notifications", icon: Bell },
+  { label: "Dashboard", icon: LayoutDashboard },
+  { label: "Tasks", icon: ClipboardList },
+  { label: "Notes", icon: StickyNote },
+  { label: "Emails", icon: Mail },
+  { label: "Leads", icon: Users },
+  { label: "Deals", icon: Handshake },
+  { label: "Organization", icon: Building2 },
+  { label: "Calendar", icon: CalendarDays },
+  { label: "Contacts", icon: Contact },
+  { label: "Call & Event Logs", icon: Phone },
+]
+
+// The bottom nav surfaces the sidebar's first three destinations; the
+// drawer (opened from the nav's Menu tab) holds the rest.
+const mobileNavItems = mobileSidebarItems.slice(2, 5)
+const mobileDrawerItems = mobileSidebarItems.slice(5)
+
 export default function CrmDataGridPage() {
   const [data, setData] = React.useState<Lead[]>(initialLeads)
   const [direction, setDirection] = React.useState<"ltr" | "rtl">("ltr")
-  const isMobile = useIsMobile()
+  const isMobile = useIsMobileState()
+  const { resolvedTheme, setTheme } = useTheme()
+  const [mobileTab, setMobileTab] = React.useState(mobileNavItems[0].label)
+  const [drawerOpen, setDrawerOpen] = React.useState(false)
 
   const columns = React.useMemo<ColumnDef<Lead>[]>(
     () => [
@@ -850,6 +892,7 @@ export default function CrmDataGridPage() {
         header: ({ table }) => (
           <div className="flex h-full items-center justify-center">
             <Checkbox
+              className="size-3.5 [&_svg]:size-3"
               checked={
                 table.getIsAllRowsSelected()
                   ? true
@@ -865,6 +908,7 @@ export default function CrmDataGridPage() {
         cell: ({ row }) => (
           <div className="flex h-full items-center justify-center">
             <Checkbox
+              className="size-3.5 [&_svg]:size-3"
               checked={row.getIsSelected()}
               onCheckedChange={(v) => row.toggleSelected(!!v)}
               aria-label="Select row"
@@ -882,7 +926,7 @@ export default function CrmDataGridPage() {
           cell: {
             variant: "select",
             options: nameOptions,
-            imageSize: "size-5",
+            imageSize: "size-4",
           },
         },
       },
@@ -896,7 +940,7 @@ export default function CrmDataGridPage() {
           cell: {
             variant: "select",
             options: organisationOptions,
-            imageSize: "size-5",
+            imageSize: "size-4",
             className: "rounded-xs",
           },
         },
@@ -940,7 +984,7 @@ export default function CrmDataGridPage() {
           cell: {
             variant: "select",
             options: assignedOptions,
-            imageSize: "size-5",
+            imageSize: "size-4",
           },
         },
       },
@@ -979,12 +1023,8 @@ export default function CrmDataGridPage() {
     },
   })
 
-  return (
-    <SidebarProvider>
-      <CrmSidebar />
-      <SidebarInset className="h-screen min-w-0 overflow-hidden">
-        <SidebarTrigger className="sr-only" />
-        <div className="flex h-full min-w-0 flex-col overflow-hidden">
+  const header = (
+    <>
           <Header
             leftControls={
               <>
@@ -1037,6 +1077,11 @@ export default function CrmDataGridPage() {
               </Button>
             }
           />
+    </>
+  )
+
+  const content = (
+    <>
           <SubHeader
             className="scrollbar-hide overflow-x-auto [&_[data-slot=sub-header-left]]:shrink-0 [&_[data-slot=sub-header-left]>*]:shrink-0 [&_[data-slot=sub-header-right]]:shrink-0 [&_[data-slot=sub-header-right]>*]:shrink-0"
             leftControls={
@@ -1053,7 +1098,7 @@ export default function CrmDataGridPage() {
                 >
                   <SelectTrigger
                     variant="subtle"
-                    size="sm"
+                    size={isMobile ? "md" : "sm"}
                     suffix={<ChevronDown />}
                   >
                     <SelectValue />
@@ -1071,7 +1116,7 @@ export default function CrmDataGridPage() {
                 <Select items={organisationItems} defaultValue="gumroad">
                   <SelectTrigger
                     variant="subtle"
-                    size="sm"
+                    size={isMobile ? "md" : "sm"}
                     suffix={<ChevronDown />}
                   >
                     <SelectValue />
@@ -1089,7 +1134,7 @@ export default function CrmDataGridPage() {
                 <Select items={statusFilterItems} defaultValue="open">
                   <SelectTrigger
                     variant="subtle"
-                    size="sm"
+                    size={isMobile ? "md" : "sm"}
                     suffix={<ChevronDown />}
                   >
                     <SelectValue />
@@ -1127,7 +1172,7 @@ export default function CrmDataGridPage() {
             }
           />
 
-          <div className="mt-2 min-h-0 min-w-0 flex-1 overflow-hidden px-5 pb-5">
+          <div className="mt-2 in-data-[slot=mobile-shell]:mt-0 min-h-0 min-w-0 flex-1 overflow-hidden px-5 pb-5 in-data-[slot=mobile-shell]:px-4 in-data-[slot=mobile-shell]:pb-4">
             <TooltipProvider>
               <DirectionProvider dir={direction}>
                 <DataGrid
@@ -1141,9 +1186,9 @@ export default function CrmDataGridPage() {
             </TooltipProvider>
           </div>
 
-          <div className="flex items-center justify-between border-t border-border-soft px-3 py-1.5">
+          <div className="flex items-center justify-between border-t border-border-soft px-3 py-1.5 in-data-[slot=mobile-shell]:hidden">
             <Tabs defaultValue="20">
-              <TabsList>
+              <TabsList size={isMobile ? "default" : "sm"}>
                 <TabsIndicator />
                 <TabsTrigger value="20">20</TabsTrigger>
                 <TabsTrigger value="50">50</TabsTrigger>
@@ -1154,8 +1199,105 @@ export default function CrmDataGridPage() {
               {data.length} of {data.length}
             </span>
           </div>
+    </>
+  )
+
+  // Viewport unknown until measured on the client — render nothing for that
+  // instant instead of flashing the desktop layout on phones.
+  if (isMobile === undefined) return null
+
+  if (isMobile) {
+    return (
+      <MobileShell>
+        <MobileShellHeader
+          prefix={
+            <div className="flex min-w-0 items-center gap-2">
+              <img
+                src="/images/svg/logo-crm.svg"
+                alt=""
+                className="size-7 shrink-0"
+              />
+              <h1 className="truncate text-xl leading-tight font-semibold text-foreground">
+                Leads
+              </h1>
+            </div>
+          }
+          suffix={
+            <div className="flex items-center gap-2">
+              <Button size="default">
+                <Plus />
+                Create
+              </Button>
+            </div>
+          }
+        />
+        <MobileShellContent className="flex flex-col overflow-hidden">
+          {content}
+        </MobileShellContent>
+        <MobileNav>
+          {mobileNavItems.map((item) => (
+            <MobileNavItem
+              key={item.label}
+              label={item.label}
+              icon={<item.icon />}
+              active={mobileTab === item.label}
+              onClick={() => setMobileTab(item.label)}
+            />
+          ))}
+          <MobileNavItem
+            label="Menu"
+            icon={<Menu />}
+            onClick={() => setDrawerOpen(true)}
+          />
+        </MobileNav>
+        <Drawer
+          open={drawerOpen}
+          onOpenChange={setDrawerOpen}
+          showSwipeHandle
+        >
+          <DrawerContent>
+            <DrawerTitle className="sr-only">CRM</DrawerTitle>
+            <nav className="scroll-fade scroll-fade-5 flex min-h-0 flex-col gap-1 overflow-y-auto p-3 pt-2">
+              <Button
+                variant="ghost"
+                size="default"
+                className="w-full justify-start font-normal [&_svg]:text-muted-foreground"
+                onClick={() =>
+                  setTheme(resolvedTheme === "dark" ? "light" : "dark")
+                }
+              >
+                {resolvedTheme === "dark" ? <Sun /> : <Moon />}
+                {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
+              </Button>
+              {mobileDrawerItems.map((item) => (
+                <Button
+                  key={item.label}
+                  variant="ghost"
+                  size="default"
+                  className="w-full justify-start font-normal [&_svg]:text-muted-foreground"
+                >
+                  <item.icon />
+                  {item.label}
+                </Button>
+              ))}
+            </nav>
+          </DrawerContent>
+        </Drawer>
+      </MobileShell>
+    )
+  }
+
+  return (
+    <SidebarProvider>
+      <CrmSidebar />
+      <SidebarInset className="h-screen min-w-0 overflow-hidden">
+        <SidebarTrigger className="sr-only" />
+        <div className="flex h-full min-w-0 flex-col overflow-hidden">
+          {header}
+          {content}
         </div>
       </SidebarInset>
     </SidebarProvider>
   )
 }
+

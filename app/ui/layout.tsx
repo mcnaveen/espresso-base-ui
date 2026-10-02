@@ -18,54 +18,46 @@ import {
   BoxSelect,
   Boxes,
   Calendar,
-  ChartColumn,
-  ChevronsUpDown,
   CalendarClock,
   CreditCard,
   CloudUpload,
   CaseSensitive,
+  ChartColumn,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleHelp,
-  ClipboardCheck,
   Columns3,
-  Compass,
   Divide,
   Ellipsis,
   Folder,
   FormInput,
-  GalleryHorizontal,
-  Gauge,
-  Hash,
+  GripVertical,
   History,
-  IdCard,
-  Images,
   Home,
   Inbox,
   Keyboard,
   Layout,
   Link2,
-  List,
   ListChecks,
+  ListCollapse,
+  List,
   LoaderCircle,
   LogOut,
-  MenuSquare,
   MessageCircle,
   MessageSquare,
   MessagesSquare,
   Moon,
-  MousePointerClick,
-  OctagonAlert,
+  PanelBottom,
   PanelLeft,
   PanelRight,
   PanelTop,
   Plane,
   Plus,
   Radio,
-  Rows2,
   Search,
   SlidersHorizontal,
+  Smartphone,
   SquareCheckBig,
   SquareDashed,
   Star,
@@ -74,7 +66,6 @@ import {
   Tags,
   TextCursorInput,
   ToggleLeft,
-  ToggleRight,
   Tornado,
   User,
   Workflow,
@@ -142,9 +133,8 @@ const teams = [
 ]
 
 const components = [
-  { label: "Accordion", href: "/ui/accordion", icon: ChevronsUpDown },
+  { label: "Accordion", href: "/ui/accordion", icon: ListCollapse },
   { label: "Alert", href: "/ui/alert", icon: AlertCircle },
-  { label: "Alert Dialog", href: "/ui/alert-dialog", icon: OctagonAlert },
   { label: "Attachment", href: "/ui/attachment", icon: Paperclip },
   { label: "Avatar", href: "/ui/avatar", icon: User },
   { label: "Badge", href: "/ui/badge", icon: BadgeCheck },
@@ -153,30 +143,19 @@ const components = [
   { label: "Button Group", href: "/ui/button-group", icon: Inbox },
   { label: "Calendar", href: "/ui/calendar", icon: Calendar },
   { label: "Card", href: "/ui/card", icon: CreditCard },
-  { label: "Carousel", href: "/ui/carousel", icon: GalleryHorizontal },
   { label: "Chart", href: "/ui/chart", icon: ChartColumn },
   { label: "Checkbox", href: "/ui/checkbox", icon: SquareCheckBig },
-  {
-    label: "Checkbox Group",
-    href: "/ui/checkbox-group",
-    icon: ListChecks,
-  },
   { label: "Color Picker", href: "/ui/color-picker", icon: Sun },
   { label: "Color Swatch", href: "/ui/color-swatch", icon: Sun },
   { label: "Combobox", href: "/ui/combobox", icon: Search },
   { label: "Command", href: "/ui/command", icon: SquareDashed },
-  {
-    label: "Context Menu",
-    href: "/ui/context-menu",
-    icon: MousePointerClick,
-  },
   { label: "Dialog", href: "/ui/dialog", icon: AppWindow },
   { label: "Divider", href: "/ui/separator", icon: Divide },
+  { label: "Drawer", href: "/ui/drawer", icon: PanelBottom },
   { label: "Dropdown Menu", href: "/ui/dropdown-menu", icon: ChevronDown },
   { label: "Empty", href: "/ui/empty", icon: Box },
   { label: "Field", href: "/ui/field", icon: FormInput },
   { label: "File Upload", href: "/ui/file-upload", icon: CloudUpload },
-  { label: "Form", href: "/ui/form", icon: ClipboardCheck },
   { label: "Header", href: "/ui/header", icon: PanelTop },
   { label: "Input", href: "/ui/input", icon: TextCursorInput },
   { label: "Input Group", href: "/ui/input-group", icon: AlignLeft },
@@ -184,45 +163,33 @@ const components = [
   { label: "Item", href: "/ui/item", icon: List },
   { label: "Kanban", href: "/ui/kanban", icon: Columns3 },
   { label: "Kbd", href: "/ui/kbd", icon: Keyboard },
-  { label: "Lightbox", href: "/ui/lightbox", icon: Images },
-  { label: "Menubar", href: "/ui/menubar", icon: MenuSquare },
   { label: "Message", href: "/ui/message", icon: MessageSquare },
   {
     label: "Message Scroller",
     href: "/ui/message-scroller",
     icon: MessagesSquare,
   },
-  { label: "Meter", href: "/ui/meter", icon: Gauge },
-  {
-    label: "Navigation Menu",
-    href: "/ui/navigation-menu",
-    icon: Compass,
-  },
+  { label: "Mobile Shell", href: "/ui/mobile-shell", icon: Smartphone },
   { label: "Notification", href: "/ui/notification", icon: BellRing },
-  { label: "Number Field", href: "/ui/number-field", icon: Hash },
-  { label: "Pagination", href: "/ui/pagination", icon: Ellipsis },
   { label: "Popover", href: "/ui/popover", icon: MessageCircle },
-  {
-    label: "Preview Card",
-    href: "/ui/preview-card",
-    icon: IdCard,
-  },
   { label: "Progress Bar", href: "/ui/progress", icon: LoaderCircle },
+  { label: "Questionnaire", href: "/ui/questionnaire", icon: ListChecks },
   { label: "Radio Group", href: "/ui/radio", icon: Radio },
   { label: "Rating", href: "/ui/rating", icon: Star },
   { label: "Select", href: "/ui/select", icon: SquareDashed },
   { label: "Sidebar", href: "/sidebar", icon: PanelLeft },
   { label: "Slider", href: "/ui/slider", icon: SlidersHorizontal },
+  { label: "Sortable", href: "/ui/sortable", icon: GripVertical },
   { label: "Sonner", href: "/ui/sonner", icon: BellPlus },
   { label: "Spinner", href: "/ui/spinner", icon: Tornado },
+  { label: "Sub Header", href: "/ui/sub-header", icon: PanelTop },
   { label: "Switch", href: "/ui/switch", icon: ToggleLeft },
   { label: "Table", href: "/ui/table", icon: TableIcon },
   { label: "Tabs", href: "/ui/tabs", icon: Layout },
   { label: "Tags", href: "/ui/tag", icon: Tags },
   { label: "Text Area", href: "/ui/textarea", icon: CaseSensitive },
   { label: "Timeline", href: "/ui/timeline", icon: History },
-  { label: "Toggle", href: "/ui/toggle", icon: ToggleRight },
-  { label: "Toggle Group", href: "/ui/toggle-group", icon: Rows2 },
+  { label: "Toast", href: "/ui/toast", icon: Bell },
   { label: "Tooltip", href: "/ui/tooltip", icon: BoxSelect },
 ]
 
@@ -299,6 +266,12 @@ function UISidebar() {
                         <img src="/images/svg/logo-crm.svg" alt="CRM" />
                       </div>
                       CRM Data Grid
+                    </DropdownMenuItem>
+                    <DropdownMenuItem render={<a href="/crm-data-grid-base" />}>
+                      <div className="flex size-7 items-center justify-center rounded-md text-white">
+                        <img src="/images/svg/logo-crm.svg" alt="CRM" />
+                      </div>
+                      CRM Data Grid Base
                     </DropdownMenuItem>
                     <DropdownMenuItem render={<a href="/helpdesk" />}>
                       <div className="flex size-7 items-center justify-center rounded-md text-white">
@@ -540,12 +513,22 @@ function UISidebar() {
 }
 
 export default function UILayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname()
+  const activeComponent =
+    components.find((item) => item.href === pathname)?.label ?? "Components"
+
   return (
     <SidebarProvider>
       <UISidebar />
-      <SidebarInset className="relative h-screen min-w-0 overflow-hidden">
-        <SidebarTrigger className="absolute top-3 right-3 z-50 md:hidden" />
-        <main className="scrollbar-hide h-full min-h-0 min-w-0 flex-1 overflow-auto">
+      <SidebarInset className="relative flex h-screen min-w-0 flex-col overflow-hidden">
+        {/* Mobile-only header: sidebar toggle left, component name centered. */}
+        <header className="relative flex h-12 shrink-0 items-center border-b border-border-soft bg-background px-2 md:hidden">
+          <SidebarTrigger />
+          <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 text-base font-medium text-foreground">
+            {activeComponent}
+          </span>
+        </header>
+        <main className="scrollbar-hide min-h-0 min-w-0 flex-1 overflow-auto">
           {children}
         </main>
         <Toaster />
