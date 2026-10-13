@@ -4,6 +4,33 @@
   "homepage": "https://espresso-base-ui.vercel.app",
   "items": [
     {
+      "name": "emoji-picker",
+      "type": "registry:ui",
+      "title": "Emoji Picker",
+      "description": "A searchable emoji picker in a popover \u2014 button trigger, name search over the full emoji set, tap-friendly grid.",
+      "dependencies": [
+        "@base-ui/react",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/input.json",
+        "https://espresso-base-ui.vercel.app/r/popover.json",
+        "https://espresso-base-ui.vercel.app/r/tabs.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/emoji-picker/emoji-picker.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "registry/espresso/emoji-picker/emoji-picker-data.ts",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
       "$schema": "https://ui.shadcn.com/schema/registry-item.json",
       "name": "espresso-font",
       "type": "registry:font",
