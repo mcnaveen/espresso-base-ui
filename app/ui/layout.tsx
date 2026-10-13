@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
   Smile,
+  SquarePen,
   AlertCircle,
   AlignLeft,
   AppWindow,
@@ -153,6 +154,7 @@ const components = [
   { label: "Dialog", href: "/ui/dialog", icon: AppWindow },
   { label: "Divider", href: "/ui/separator", icon: Divide },
   { label: "Drawer", href: "/ui/drawer", icon: PanelBottom },
+  { label: "Editor", href: "/ui/editor", icon: SquarePen },
   { label: "Emoji Picker", href: "/ui/emoji-picker", icon: Smile },
   { label: "Dropdown Menu", href: "/ui/dropdown-menu", icon: ChevronDown },
   { label: "Empty", href: "/ui/empty", icon: Box },

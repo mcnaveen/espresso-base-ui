@@ -4,10 +4,45 @@
   "homepage": "https://espresso-base-ui.vercel.app",
   "items": [
     {
+      "name": "editor",
+      "type": "registry:ui",
+      "title": "Editor",
+      "description": "A tiptap rich-text editor — outline, subtle and ghost variants, top or bottom toolbar, character limit, resizer, text and highlight colours.",
+      "dependencies": [
+        "@tiptap/react",
+        "@tiptap/pm",
+        "@tiptap/core",
+        "@tiptap/starter-kit",
+        "@tiptap/extensions",
+        "@tiptap/extension-text-align",
+        "@tiptap/extension-text-style",
+        "@tiptap/extension-highlight",
+        "@tiptap/extension-image",
+        "class-variance-authority"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/popover.json",
+        "https://espresso-base-ui.vercel.app/r/dropdown-menu.json",
+        "https://espresso-base-ui.vercel.app/r/tooltip.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/editor/editor.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "registry/espresso/editor/editor-icons.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
       "name": "emoji-picker",
       "type": "registry:ui",
       "title": "Emoji Picker",
-      "description": "A searchable emoji picker in a popover \u2014 button trigger, name search over the full emoji set, tap-friendly grid.",
+      "description": "A searchable emoji picker in a popover — button trigger, name search over the full emoji set, tap-friendly grid.",
       "dependencies": [
         "@base-ui/react",
         "lucide-react"
