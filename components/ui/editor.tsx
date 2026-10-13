@@ -607,11 +607,19 @@ function Editor({
   React.useEffect(() => {
     editor?.setEditable(!disabled)
   }, [editor, disabled])
+  // only when the caller swaps the content in later — the first run would
+  // re-set what the editor opened with, and leave the caret at the end of
+  // the document instead of its start
+  const contentSettled = React.useRef(false)
   React.useEffect(() => {
-    if (editor && content !== editor.getHTML()) {
+    if (!editor) return
+    if (!contentSettled.current) {
+      contentSettled.current = true
+      return
+    }
+    if (content !== editor.getHTML()) {
       editor.commands.setContent(content)
     }
-    // only when the caller swaps the content in, not on every keystroke
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, editor])
 

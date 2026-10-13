@@ -47,6 +47,7 @@ export const docsComponents = [
   { label: "Questionnaire", href: "/docs/components/questionnaire" },
   { label: "Radio Group", href: "/docs/components/radio-group" },
   { label: "Rating", href: "/docs/components/rating" },
+  { label: "Rich Text Editor", href: "/docs/components/rich-text-editor" },
   { label: "Select", href: "/docs/components/select" },
   { label: "Separator", href: "/docs/components/separator" },
   { label: "Sidebar", href: "/docs/components/sidebar" },

@@ -23,7 +23,6 @@ import {
   Diamond,
   FileText,
   Gauge,
-  Github,
   HelpCircle,
   Inbox,
   Info,
@@ -62,6 +61,7 @@ import {
   Wallet,
   X,
 } from "lucide-react"
+import { Github } from "@/components/ui/brand-icons"
 import {
   Alert,
   AlertAction,
