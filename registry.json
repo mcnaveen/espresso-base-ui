@@ -7,7 +7,7 @@
       "name": "editor",
       "type": "registry:ui",
       "title": "Editor",
-      "description": "A tiptap rich-text editor — outline, subtle and ghost variants, top or bottom toolbar, character limit, resizer, text and highlight colours.",
+      "description": "The editor molecule — an EditorProvider core, the RichTextKit extension bundle, the field editor (outline/subtle/ghost) and the full document editor with block drag, table controls, mentions and slash commands.",
       "dependencies": [
         "@tiptap/react",
         "@tiptap/pm",
@@ -18,23 +18,75 @@
         "@tiptap/extension-text-style",
         "@tiptap/extension-highlight",
         "@tiptap/extension-image",
+        "@tiptap/extension-table",
+        "@tiptap/extension-list",
+        "@tiptap/extension-youtube",
+        "@tiptap/extension-subscript",
+        "@tiptap/extension-superscript",
+        "@tiptap/extension-mention",
+        "@tiptap/suggestion",
+        "@tiptap/extension-details",
         "class-variance-authority"
       ],
       "registryDependencies": [
         "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
         "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/input.json",
         "https://espresso-base-ui.vercel.app/r/popover.json",
         "https://espresso-base-ui.vercel.app/r/dropdown-menu.json",
-        "https://espresso-base-ui.vercel.app/r/tooltip.json"
+        "https://espresso-base-ui.vercel.app/r/tooltip.json",
+        "https://espresso-base-ui.vercel.app/r/emoji-picker.json"
       ],
       "files": [
         {
-          "path": "registry/espresso/editor/editor.tsx",
-          "type": "registry:ui"
+          "path": "registry/espresso/editor/index.ts",
+          "type": "registry:ui",
+          "target": "components/ui/editor/index.ts"
+        },
+        {
+          "path": "registry/espresso/editor/core.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/core.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/kit.ts",
+          "type": "registry:ui",
+          "target": "components/ui/editor/kit.ts"
+        },
+        {
+          "path": "registry/espresso/editor/extensions.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/extensions.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/field.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/field.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/document.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/document.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/block-handle.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/block-handle.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/table-controls.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/table-controls.tsx"
         },
         {
           "path": "registry/espresso/editor/editor-icons.tsx",
-          "type": "registry:ui"
+          "type": "registry:ui",
+          "target": "components/ui/editor-icons.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/rich-text-editor-icons.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/rich-text-editor-icons.tsx"
         }
       ]
     },
@@ -365,51 +417,6 @@
       ],
       "registryDependencies": [
         "https://espresso-base-ui.vercel.app/r/espresso-theme.json"
-      ]
-    },
-    {
-      "name": "rich-text-editor",
-      "type": "registry:ui",
-      "title": "Rich Text Editor",
-      "description": "A tiptap document editor under a fixed formatting bar — block styles, fonts and sizes, colours, lists, alignment, tables, task lists, media and more.",
-      "dependencies": [
-        "@tiptap/react",
-        "@tiptap/pm",
-        "@tiptap/core",
-        "@tiptap/starter-kit",
-        "@tiptap/extensions",
-        "@tiptap/extension-text-align",
-        "@tiptap/extension-text-style",
-        "@tiptap/extension-highlight",
-        "@tiptap/extension-image",
-        "@tiptap/extension-table",
-        "@tiptap/extension-list",
-        "@tiptap/extension-youtube",
-        "@tiptap/extension-subscript",
-        "@tiptap/extension-superscript",
-        "lucide-react",
-        "@tiptap/extension-mention",
-        "@tiptap/suggestion",
-        "@tiptap/extension-details"
-      ],
-      "registryDependencies": [
-        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
-        "https://espresso-base-ui.vercel.app/r/dropdown-menu.json",
-        "https://espresso-base-ui.vercel.app/r/popover.json",
-        "https://espresso-base-ui.vercel.app/r/tooltip.json",
-        "https://espresso-base-ui.vercel.app/r/emoji-picker.json",
-        "https://espresso-base-ui.vercel.app/r/button.json",
-        "https://espresso-base-ui.vercel.app/r/input.json"
-      ],
-      "files": [
-        {
-          "path": "registry/espresso/rich-text-editor/rich-text-editor.tsx",
-          "type": "registry:ui"
-        },
-        {
-          "path": "registry/espresso/rich-text-editor/rich-text-editor-icons.tsx",
-          "type": "registry:ui"
-        }
       ]
     },
     {
