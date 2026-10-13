@@ -1,32 +1,14 @@
 "use client"
 
-// The timeless-gowtham branch's text editor (espresso-2.0 › input
-// texteditor & richtext › "text-editor new", 31633:10471), on tiptap.
-// One editor, three ways of drawing it:
-//
-// · outline — a 1px rule on a 12px radius. Hovered, the rule darkens a
-//   step under the sm shadow; focused, a step further under the same.
-// · subtle — no rule, filled; a shade darker hovered. Focused, it turns
-//   white under the outline's focused rule and shadow.
-// · ghost — the text alone; a selection washes amber and the full bar
-//   floats over it under the lg shadow.
-//
-// And two places for the bar. On top: the full bar ruled beneath, the
-// count of what is left of the character limit, and the resizer that
-// drags the editor taller. At the bottom, for a comment: the comment bar
-// ruled above, with Discard and Comment on the right. Disabled, any of
-// them is drawn at half.
+// The field editor, after the branch's TeField.vue: one editor, three ways
+// of drawing it (outline, subtle, ghost), the bar on top or at the bottom —
+// composed over the editor molecule's provider with RichTextKit configured
+// down to the field's own set: marks, lists, quote, code block, link,
+// image, colour and alignment — none of the document's blocks or menus.
 import * as React from "react"
-import { Extension, type Editor as TiptapEditor } from "@tiptap/core"
-import { Plugin } from "@tiptap/pm/state"
-import { EditorContent, useEditor, useEditorState } from "@tiptap/react"
+import type { Editor as TiptapEditor } from "@tiptap/core"
+import { useEditorState } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
-import StarterKit from "@tiptap/starter-kit"
-import Highlight from "@tiptap/extension-highlight"
-import Image from "@tiptap/extension-image"
-import TextAlign from "@tiptap/extension-text-align"
-import { Color, TextStyle } from "@tiptap/extension-text-style"
-import { Placeholder } from "@tiptap/extensions"
 import { cva } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
@@ -66,50 +48,12 @@ import {
   UnderlineIcon,
 } from "@/components/ui/editor-icons"
 
-/* ---------------------------------- palette ---------------------------------
- * The editor's named palette. `indigo` has no token of its own and is drawn
- * in violet, as the source draws it. A pick writes the token reference, so
- * the mark follows the theme; Default unsets it.
- */
-const PALETTE = [
-  "red",
-  "orange",
-  "yellow",
-  "green",
-  "teal",
-  "cyan",
-  "blue",
-  "indigo",
-  "purple",
-  "pink",
-  "gray",
-] as const
+import { EditorContent, EditorProvider } from "./core"
+import { RichTextKit } from "./kit"
+import { highlightValue, hue, PALETTE, textValue } from "./extensions"
 
-const hue = (name: string) => (name === "indigo" ? "violet" : name)
-const textValue = (name: string) => `var(--color-${hue(name)}-600)`
-const highlightValue = (name: string) => `var(--color-${hue(name)}-100)`
 const nameOf = (value: string | undefined, of: (name: string) => string) =>
   PALETTE.find((n) => of(n) === value) ?? null
-
-/* ---------------------------------- limit -----------------------------------
- * A change that would carry the text past the limit is refused, and the
- * foot counts down what is left.
- */
-const Limit = Extension.create<{ limit: number }>({
-  name: "editorLimit",
-  addOptions: () => ({ limit: 450 }),
-  addProseMirrorPlugins() {
-    const { limit } = this.options
-    return [
-      new Plugin({
-        filterTransaction: (tr, state) =>
-          !tr.docChanged ||
-          tr.doc.textContent.length <= limit ||
-          tr.doc.textContent.length <= state.doc.textContent.length,
-      }),
-    ]
-  },
-})
 
 /* --------------------------------- toolbar -------------------------------- */
 
@@ -511,7 +455,7 @@ function SwatchPopover({
 
 /* --------------------------------- editor --------------------------------- */
 
-const editorVariants = cva(
+export const editorVariants = cva(
   "relative flex w-full flex-col overflow-hidden rounded-xl transition-[background-color,border-color,box-shadow] duration-150",
   {
     variants: {
@@ -545,7 +489,7 @@ const docClassName = cn(
 
 const MIN_HEIGHT = 180
 
-interface EditorProps {
+export interface EditorProps {
   variant?: "outline" | "subtle" | "ghost"
   toolbar?: "top" | "bottom" | "none"
   disabled?: boolean
@@ -560,7 +504,7 @@ interface EditorProps {
   onDiscard?: () => void
 }
 
-function Editor({
+export function Editor({
   variant = "outline",
   toolbar = "top",
   disabled = false,
@@ -572,56 +516,84 @@ function Editor({
   onComment,
   onDiscard,
 }: EditorProps) {
+  return (
+    <EditorProvider
+      extensions={[
+        RichTextKit.configure({
+          heading: { levels: [1, 2, 3] },
+          table: false,
+          taskList: false,
+          details: false,
+          columns: false,
+          callout: false,
+          attachment: false,
+          audio: false,
+          embed: false,
+          video: false,
+          mention: false,
+          slashCommands: false,
+          fontFamily: false,
+          fontSize: false,
+          lineHeight: false,
+          subscript: false,
+          superscript: false,
+          placeholder: { placeholder },
+          limit,
+        }),
+      ]}
+      content={content}
+      editable={!disabled}
+      onUpdate={onChange}
+      deps={[limit, placeholder]}
+    >
+      {(editor) => (
+        <EditorField
+          editor={editor}
+          variant={variant}
+          toolbar={toolbar}
+          disabled={disabled}
+          limit={limit}
+          className={className}
+          onComment={onComment}
+          onDiscard={onDiscard}
+        />
+      )}
+    </EditorProvider>
+  )
+}
+
+function EditorField({
+  editor,
+  variant,
+  toolbar,
+  disabled,
+  limit,
+  className,
+  onComment,
+  onDiscard,
+}: {
+  editor: TiptapEditor | null
+  variant: "outline" | "subtle" | "ghost"
+  toolbar: "top" | "bottom" | "none"
+  disabled: boolean
+  limit: number
+  className?: string
+  onComment?: (html: string) => void
+  onDiscard?: () => void
+}) {
   const [length, setLength] = React.useState(0)
   const [height, setHeight] = React.useState<number | null>(null)
   const boxRef = React.useRef<HTMLDivElement>(null)
 
-  const editor = useEditor(
-    {
-      immediatelyRender: false,
-      editable: !disabled,
-      content,
-      extensions: [
-        StarterKit.configure({
-          heading: { levels: [1, 2, 3] },
-          link: { openOnClick: false },
-        }),
-        TextStyle,
-        Color,
-        Highlight.configure({ multicolor: true }),
-        Image,
-        TextAlign.configure({ types: ["paragraph", "heading"] }),
-        Placeholder.configure({
-          placeholder,
-          showOnlyWhenEditable: false,
-        }),
-        Limit.configure({ limit }),
-      ],
-      onTransaction: ({ editor: ed }) =>
-        setLength(ed.state.doc.textContent.length),
-      onUpdate: ({ editor: ed }) => onChange?.(ed.getHTML()),
-    },
-    [limit, placeholder]
-  )
-
-  React.useEffect(() => {
-    editor?.setEditable(!disabled)
-  }, [editor, disabled])
-  // only when the caller swaps the content in later — the first run would
-  // re-set what the editor opened with, and leave the caret at the end of
-  // the document instead of its start
-  const contentSettled = React.useRef(false)
   React.useEffect(() => {
     if (!editor) return
-    if (!contentSettled.current) {
-      contentSettled.current = true
-      return
+    const track = () => setLength(editor.state.doc.textContent.length)
+    editor.on("transaction", track)
+    track()
+    return () => {
+      editor.off("transaction", track)
     }
-    if (content !== editor.getHTML()) {
-      editor.commands.setContent(content)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, editor])
+  }, [editor])
 
   const remaining = Math.max(0, limit - length)
 
@@ -756,5 +728,3 @@ function Editor({
     </div>
   )
 }
-
-export { Editor, editorVariants, type EditorProps }

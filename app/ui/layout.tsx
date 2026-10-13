@@ -3,7 +3,6 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
-  FileText,
   Smile,
   SquarePen,
   AlertCircle,
@@ -181,7 +180,6 @@ const components = [
   { label: "Questionnaire", href: "/ui/questionnaire", icon: ListChecks },
   { label: "Radio Group", href: "/ui/radio", icon: Radio },
   { label: "Rating", href: "/ui/rating", icon: Star },
-  { label: "Rich Text Editor", href: "/ui/rich-text-editor", icon: FileText },
   { label: "Select", href: "/ui/select", icon: SquareDashed },
   { label: "Sidebar", href: "/sidebar", icon: PanelLeft },
   { label: "Slider", href: "/ui/slider", icon: SlidersHorizontal },
