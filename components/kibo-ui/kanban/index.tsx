@@ -81,6 +81,7 @@ export const KanbanBoard = ({ id, children, className }: KanbanBoardProps) => {
         isOver ? "ring-primary" : "ring-transparent",
         className
       )}
+      data-over={isOver ? "true" : undefined}
       ref={setNodeRef}
     >
       {children}
@@ -108,6 +109,10 @@ export const KanbanCard = <T extends KanbanItemProps = KanbanItemProps>({
     isDragging,
   } = useSortable({
     id,
+    // animate layout changes from the live data moves (cards entering or
+    // leaving a column mid-drag), not only same-list sorting — without this
+    // neighbours jump to their new spots
+    animateLayoutChanges: () => true,
   });
   const { activeCardId } = useContext(KanbanContext) as KanbanContextProps;
 
@@ -327,7 +332,7 @@ export const KanbanProvider = <
         </div>
         {typeof window !== "undefined" &&
           createPortal(
-            <DragOverlay>
+            <DragOverlay dropAnimation={null}>
               <t.Out />
             </DragOverlay>,
             document.body
