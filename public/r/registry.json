@@ -368,6 +368,51 @@
       ]
     },
     {
+      "name": "rich-text-editor",
+      "type": "registry:ui",
+      "title": "Rich Text Editor",
+      "description": "A tiptap document editor under a fixed formatting bar — block styles, fonts and sizes, colours, lists, alignment, tables, task lists, media and more.",
+      "dependencies": [
+        "@tiptap/react",
+        "@tiptap/pm",
+        "@tiptap/core",
+        "@tiptap/starter-kit",
+        "@tiptap/extensions",
+        "@tiptap/extension-text-align",
+        "@tiptap/extension-text-style",
+        "@tiptap/extension-highlight",
+        "@tiptap/extension-image",
+        "@tiptap/extension-table",
+        "@tiptap/extension-list",
+        "@tiptap/extension-youtube",
+        "@tiptap/extension-subscript",
+        "@tiptap/extension-superscript",
+        "lucide-react",
+        "@tiptap/extension-mention",
+        "@tiptap/suggestion",
+        "@tiptap/extension-details"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/dropdown-menu.json",
+        "https://espresso-base-ui.vercel.app/r/popover.json",
+        "https://espresso-base-ui.vercel.app/r/tooltip.json",
+        "https://espresso-base-ui.vercel.app/r/emoji-picker.json",
+        "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/input.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/rich-text-editor/rich-text-editor.tsx",
+          "type": "registry:ui"
+        },
+        {
+          "path": "registry/espresso/rich-text-editor/rich-text-editor-icons.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    },
+    {
       "$schema": "https://ui.shadcn.com/schema/registry-item.json",
       "name": "sub-header",
       "type": "registry:ui",

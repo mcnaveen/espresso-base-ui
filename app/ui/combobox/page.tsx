@@ -1,7 +1,8 @@
 "use client"
 
 import * as React from "react"
-import { Apple, Banana, Cherry, Citrus, Grape } from "lucide-react"
+import { Banana, Cherry, Citrus, Grape } from "lucide-react"
+import { Apple } from "@/components/ui/brand-icons"
 import {
   Combobox,
   ComboboxChip,
