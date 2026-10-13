@@ -516,13 +516,14 @@ const editorVariants = cva(
   {
     variants: {
       variant: {
-        // the rule darkens under the pointer and with the caret in
+        // the Input's outline: a shadow-drawn rule that raises on hover and
+        // sharpens with the caret in, under the gray focus ring
         outline:
-          "border border-border not-data-disabled:hover:border-border-normal not-data-disabled:hover:shadow-sm not-data-disabled:focus-within:border-border-strong not-data-disabled:focus-within:bg-background not-data-disabled:focus-within:shadow-sm",
-        // filled, a shade darker under the pointer; focused, white under
-        // the outline's focused rule
+          "bg-transparent shadow-default transition-shadow not-data-disabled:hover:shadow-raised not-data-disabled:focus-within:shadow-[0px_1px_1px_rgba(0,0,0,0.12),0px_0px_0px_1px_rgba(0,0,0,0.1)]! not-data-disabled:focus-within:ring-2 not-data-disabled:focus-within:ring-[rgba(201,201,201,0.9)]",
+        // the Input's subtle: filled, a shade darker under the pointer;
+        // focused, white under the same rule and ring
         subtle:
-          "border border-transparent bg-secondary not-data-disabled:hover:bg-[color-mix(in_oklch,var(--secondary),black_2%)] not-data-disabled:focus-within:border-border-strong not-data-disabled:focus-within:bg-background not-data-disabled:focus-within:shadow-sm dark:not-data-disabled:hover:bg-[color-mix(in_oklch,var(--secondary),white_5%)]",
+          "bg-secondary not-data-disabled:hover:bg-[color-mix(in_oklch,var(--secondary),black_2%)] not-data-disabled:focus-within:bg-background not-data-disabled:focus-within:shadow-[0px_1px_1px_rgba(0,0,0,0.12),0px_0px_0px_1px_rgba(0,0,0,0.1)]! not-data-disabled:focus-within:ring-2 not-data-disabled:focus-within:ring-[rgba(201,201,201,0.9)] dark:not-data-disabled:hover:bg-[color-mix(in_oklch,var(--secondary),white_5%)]",
         // the text alone; nothing may clip the floating bar
         ghost: "overflow-visible",
       },
@@ -657,7 +658,7 @@ function Editor({
       style={height !== null ? { height } : undefined}
     >
       {editor && toolbar === "top" && (
-        <div className="flex h-[31px] shrink-0 items-start border-b border-border-soft px-1 pt-[3px] [&>[data-slot=editor-toolbar]]:p-0">
+        <div className="flex h-[31px] shrink-0 items-start border-b border-border-soft in-data-[variant=subtle]:border-border px-1 pt-[3px] [&>[data-slot=editor-toolbar]]:p-0">
           <EditorToolbar editor={editor} kind="full" disabled={disabled} />
         </div>
       )}
@@ -697,7 +698,7 @@ function Editor({
       )}
 
       {editor && toolbar === "bottom" && (
-        <div className="flex h-10 shrink-0 items-center justify-between border-t border-border-soft py-1 pr-2 pl-1">
+        <div className="flex h-10 shrink-0 items-center justify-between border-t border-border-soft in-data-[variant=subtle]:border-border py-1 pr-2 pl-1">
           <EditorToolbar editor={editor} kind="comment" disabled={disabled} />
           <div className="flex items-center gap-1.5">
             <Button
