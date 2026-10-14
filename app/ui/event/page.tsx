@@ -460,7 +460,10 @@ export default function EventPage() {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* The app header: 48 tall, a rule along the bottom. */}
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-[color:var(--ec-outline-gray-1,var(--border-soft))] py-2.5 pr-5 pl-[18px]">
-          <span className="text-sm font-medium text-foreground">Event</span>
+          {/* The playground's breadcrumb crumb: text-lg-medium = 16px/500. */}
+          <span className="text-[16px] leading-[1.35] font-medium text-foreground">
+            Event
+          </span>
           <div className="flex items-center gap-2">
             <AvatarStack names={headerPeople} />
             <Button size="sm" variant="outline">
@@ -737,7 +740,7 @@ export default function EventPage() {
           {dropSlot ? (
             <div
               aria-hidden="true"
-              className="pointer-events-none fixed z-[24] rounded-[8px] bg-[color:var(--ec-surface-gray-1,#f8f8f8)]"
+              className="ec-scope pointer-events-none fixed z-[24] rounded-[8px] bg-[color:var(--ec-surface-gray-1,#f8f8f8)]"
               style={{
                 left: dropSlot.left,
                 top: dropSlot.top,

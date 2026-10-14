@@ -1375,7 +1375,9 @@ function InputGroupItem({
     <Input
       data-slot="color-picker-input"
       className={cn(
-        "h-6.5! shadow-[0px_1px_1px_#0000000f,0px_0px_0px_1px_#e5e5e5] dark:shadow-[0px_1px_1px_rgba(0,0,0,0.08),0px_0px_0px_1px_#343434] [&[data-slot=color-picker-input]:focus]:shadow-[0px_1px_1px_#0000001f,0px_0px_0px_1px_#d4d4d4]! dark:[&[data-slot=color-picker-input]:focus]:shadow-[0px_1px_1px_rgba(0,0,0,0.1),0px_0px_0px_1px_#424242]! [&[data-slot=color-picker-input]:not(:disabled):hover]:shadow-[0px_1px_1px_#0000001f,0px_0px_0px_1px_#d4d4d4] dark:[&[data-slot=color-picker-input]:not(:disabled):hover]:shadow-[0px_1px_1px_rgba(0,0,0,0.1),0px_0px_0px_1px_#424242]",
+        // dark rings are inset so each input keeps its own hairline instead
+        // of the rings spreading into the 1px gaps and fusing the group
+        "h-6.5! shadow-[0px_1px_1px_#0000000f,0px_0px_0px_1px_#e5e5e5] dark:shadow-[0px_1px_1px_rgba(0,0,0,0.08),inset_0px_0px_0px_1px_#343434] [&[data-slot=color-picker-input]:focus]:shadow-[0px_1px_1px_#0000001f,0px_0px_0px_1px_#d4d4d4]! dark:[&[data-slot=color-picker-input]:focus]:shadow-[0px_1px_1px_rgba(0,0,0,0.1),inset_0px_0px_0px_1px_#424242]! [&[data-slot=color-picker-input]:not(:disabled):hover]:shadow-[0px_1px_1px_#0000001f,0px_0px_0px_1px_#d4d4d4] dark:[&[data-slot=color-picker-input]:not(:disabled):hover]:shadow-[0px_1px_1px_rgba(0,0,0,0.1),inset_0px_0px_0px_1px_#424242]",
         inputGroupItemVariants({ position, className })
       )}
       value={draft ?? value}
