@@ -9,6 +9,14 @@ import {
   EmojiPickerTrigger,
 } from "@/components/ui/emoji-picker"
 import { Button } from "@/components/ui/button"
+import {
+  EmojiPicker as ReuiEmojiPicker,
+  EmojiPickerCategories as ReuiEmojiPickerCategories,
+  EmojiPickerContent as ReuiEmojiPickerContent,
+  EmojiPickerList as ReuiEmojiPickerList,
+  EmojiPickerSearch as ReuiEmojiPickerSearch,
+  EmojiPickerTrigger as ReuiEmojiPickerTrigger,
+} from "@/components/reui/emoji-picker"
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h2 className="text-sm font-medium text-foreground">{children}</h2>
@@ -93,6 +101,47 @@ export default function EmojiPickerPage() {
           selection external state.
         </SectionNote>
         <ControlledExample />
+      </div>
+
+      {/* ReUI picker on Base UI, in the espresso picker's clothes */}
+      <div className="flex flex-col gap-4">
+        <SectionTitle>ReUI Emoji Picker</SectionTitle>
+        <SectionNote>
+          The ReUI emoji picker (Base UI flavour), composed from the same
+          espresso primitives and dressed exactly like the picker above —
+          plus its own search engine, skin tones and virtualized grid.
+        </SectionNote>
+        <ReuiEmojiPicker
+          columns={9}
+          recentLimit={9}
+          recentStorageKey="espresso-reui-recent-emoji"
+        >
+          <ReuiEmojiPickerTrigger />
+          <ReuiEmojiPickerContent
+            className="w-[284px]"
+            sideOffset={6}
+            panelStyle={
+              {
+                "--emoji-picker-cell": "30px",
+                "--emoji-picker-emoji": "18px",
+                "--emoji-picker-gutter": "7px",
+                "--emoji-picker-header": "24px",
+                "--emoji-picker-list-height": "224px",
+              } as React.CSSProperties
+            }
+          >
+            <ReuiEmojiPickerCategories className="border-b-0 px-0 pt-1 pb-0.5" />
+            <div className="p-1.5">
+              <ReuiEmojiPickerSearch
+                variant="subtle"
+                size="sm"
+                icon={false}
+                placeholder="Search by keyword"
+              />
+            </div>
+            <ReuiEmojiPickerList />
+          </ReuiEmojiPickerContent>
+        </ReuiEmojiPicker>
       </div>
 
       {/* Custom trigger — reactions */}
