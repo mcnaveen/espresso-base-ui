@@ -20,7 +20,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { Calendar as DateCalendar } from "@/components/ui/calendar"
+import { MonthYearCalendar } from "@/components/ui/event/month-year-calendar"
 import {
   Dialog,
   DialogContent,
@@ -577,8 +577,11 @@ export function EventPanel({
               }
             />
             <PopoverContent align="start" className="w-auto p-2">
-              <DateCalendar
+              <MonthYearCalendar
                 mode="range"
+                defaultMonth={
+                  span.fromDate ? new Date(span.fromDate + "T00:00") : undefined
+                }
                 selected={
                   span.fromDate
                     ? {

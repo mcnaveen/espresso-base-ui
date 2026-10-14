@@ -5,11 +5,11 @@ import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Calendar as DateCalendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { EventContext } from "./context"
 import { EventStyles } from "./styles"
+import { MonthYearCalendar } from "./month-year-calendar"
 import { NewEventModal } from "./event-modal"
 import { EventMonthly } from "./view-month"
 import { EventWeekly } from "./view-week"
@@ -780,9 +780,10 @@ function DefaultHeader({
             }
           />
           <PopoverContent align="start" className="w-auto p-2">
-            <DateCalendar
+            <MonthYearCalendar
               mode="single"
               selected={new Date(selectedMonthDate + "T00:00")}
+              defaultMonth={new Date(selectedMonthDate + "T00:00")}
               onSelect={(date) => {
                 if (date) onMonthYearChange(date)
                 setOpen(false)

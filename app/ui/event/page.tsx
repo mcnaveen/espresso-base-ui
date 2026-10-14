@@ -18,7 +18,7 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import { Calendar as DateCalendar } from "@/components/ui/calendar"
+import { MonthYearCalendar } from "@/components/ui/event/month-year-calendar"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -533,7 +533,7 @@ export default function EventPage() {
                         render={
                           <button
                             type="button"
-                            className="flex items-center gap-2 text-[16px] font-medium text-[color:var(--ec-ink-gray-7)]"
+                            className="-ml-2 flex h-8 items-center gap-2 rounded-[8px] px-2 text-[16px] font-medium text-[color:var(--ec-ink-gray-7)] transition-colors hover:bg-[color:var(--ec-surface-gray-2)] active:bg-[color:var(--ec-surface-gray-3)]"
                           >
                             {monthYear(currentMonthYear, activeView)}
                             <ChevronDownIcon
@@ -546,9 +546,10 @@ export default function EventPage() {
                         }
                       />
                       <PopoverContent align="start" className="w-auto p-2">
-                        <DateCalendar
+                        <MonthYearCalendar
                           mode="single"
                           selected={new Date(selectedMonthDate + "T00:00")}
+                          defaultMonth={new Date(selectedMonthDate + "T00:00")}
                           onSelect={(date) => {
                             if (date) onMonthYearChange(date)
                             setSwitcherOpen(false)

@@ -189,6 +189,11 @@
           "target": "components/ui/event/month-strip.ts"
         },
         {
+          "path": "registry/espresso/event/month-year-calendar.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/month-year-calendar.tsx"
+        },
+        {
           "path": "registry/espresso/event/row.ts",
           "type": "registry:ui",
           "target": "components/ui/event/row.ts"
