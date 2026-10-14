@@ -5,7 +5,7 @@
 // controls and the floating selection bar — all composed over the editor
 // molecule's provider and RichTextKit.
 import * as React from "react"
-import type { Editor as TiptapEditor } from "@tiptap/core"
+import type { ChainedCommands, Editor as TiptapEditor } from "@tiptap/core"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 import { useEditorState } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
@@ -52,7 +52,12 @@ import {
   FileUploadIcon,
   GroupIcon,
   ImageIcon,
+  HighlightIcon,
   LinkIcon,
+  MarkBoldIcon,
+  MarkItalicIcon,
+  MarkStrikeIcon,
+  MarkUnderlineIcon,
   MultipleListIcon,
   NumberedListIcon,
   QuoteIcon,
@@ -343,6 +348,19 @@ function RichTextToolbar({
   const fileRef = React.useRef<HTMLInputElement>(null)
   const attachRef = React.useRef<HTMLInputElement>(null)
   const audioRef = React.useRef<HTMLInputElement>(null)
+  const videoRef = React.useRef<HTMLInputElement>(null)
+  const insertVideoFile = (file: File | undefined) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () =>
+      chain()
+        .insertContent({
+          type: "video",
+          attrs: { src: reader.result as string, title: file.name },
+        })
+        .run()
+    reader.readAsDataURL(file)
+  }
   const insertAudio = (file: File | undefined) => {
     if (!file) return
     const reader = new FileReader()
@@ -552,16 +570,16 @@ function RichTextToolbar({
 
         {/* marks */}
         <Control label="Bold" pressed={active?.bold} disabled={disabled} onClick={() => chain().toggleBold().run()}>
-          <span className="text-sm font-bold">B</span>
+          <MarkBoldIcon className="size-4" />
         </Control>
         <Control label="Italic" pressed={active?.italic} disabled={disabled} onClick={() => chain().toggleItalic().run()}>
-          <span className="font-serif text-sm italic">I</span>
+          <MarkItalicIcon className="size-4" />
         </Control>
         <Control label="Underline" pressed={active?.underline} disabled={disabled} onClick={() => chain().toggleUnderline().run()}>
-          <span className="text-sm underline">U</span>
+          <MarkUnderlineIcon className="size-4" />
         </Control>
         <Control label="Strikethrough" pressed={active?.strike} disabled={disabled} onClick={() => chain().toggleStrike().run()}>
-          <span className="text-sm line-through">S</span>
+          <MarkStrikeIcon className="size-4" />
         </Control>
 
         {/* colour */}
@@ -681,6 +699,19 @@ function RichTextToolbar({
                 <DropdownMenuItem onClick={() => chain().deleteColumn().run()}>
                   Delete column
                 </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!editor.can().mergeCells()}
+                  onClick={() => chain().mergeCells().run()}
+                >
+                  Merge cells
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!editor.can().splitCell()}
+                  onClick={() => chain().splitCell().run()}
+                >
+                  Split cell
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => chain().deleteTable().run()}>
                   Delete table
                 </DropdownMenuItem>
@@ -711,10 +742,19 @@ function RichTextToolbar({
         <BarDivider />
         {(
           [
-            { label: "Image", Icon: ImageIcon, items: [{ label: "Upload image", run: () => fileRef.current?.click() }] },
-            { label: "Video", Icon: VideoIcon, items: [{ label: "From YouTube URL", run: insertVideo }] },
-            { label: "Audio", Icon: AudioWavesIcon, items: [{ label: "Upload audio", run: () => audioRef.current?.click() }] },
-            { label: "File", Icon: FileUploadIcon, items: [{ label: "Upload file", run: () => attachRef.current?.click() }] },
+            { label: "Image", Icon: ImageIcon, items: [
+              { label: "Add image", run: () => fileRef.current?.click() },
+              { label: "From URL", run: () => {
+                const src = window.prompt("Image URL")
+                if (src) chain().setImage({ src }).run()
+              } },
+            ] },
+            { label: "Video", Icon: VideoIcon, items: [
+              { label: "Add video", run: () => videoRef.current?.click() },
+              { label: "From YouTube URL", run: insertVideo },
+            ] },
+            { label: "Audio", Icon: AudioWavesIcon, items: [{ label: "Add audio", run: () => audioRef.current?.click() }] },
+            { label: "File", Icon: FileUploadIcon, items: [{ label: "Add file", run: () => attachRef.current?.click() }] },
           ] as const
         ).map((media) => (
           <DropdownMenu key={media.label}>
@@ -832,6 +872,7 @@ function RichTextToolbar({
           )}
         <input
           ref={fileRef}
+          data-slot="rte-image-input"
           type="file"
           accept="image/*"
           className="hidden"
@@ -841,7 +882,19 @@ function RichTextToolbar({
           }}
         />
         <input
+          ref={videoRef}
+          data-slot="rte-video-input"
+          type="file"
+          accept="video/*"
+          className="hidden"
+          onChange={(event) => {
+            insertVideoFile(event.target.files?.[0])
+            event.target.value = ""
+          }}
+        />
+        <input
           ref={audioRef}
+          data-slot="rte-audio-input"
           type="file"
           accept="audio/*"
           className="hidden"
@@ -852,6 +905,7 @@ function RichTextToolbar({
         />
         <input
           ref={attachRef}
+          data-slot="rte-attach-input"
           type="file"
           className="hidden"
           onChange={(event) => {
@@ -897,42 +951,101 @@ function ColorPopover({
 }
 
 
+/** the floating bar over a run of text, as the file draws it: the block
+ * style's select, the marks, link, colour and highlight, then the aligns */
 function SelectionBar({ editor }: { editor: TiptapEditor }) {
   const active = useEditorState({
     editor,
     selector: ({ editor: ed }) => ({
+      block: activeBlockOf(ed),
       bold: ed.isActive("bold"),
       italic: ed.isActive("italic"),
       underline: ed.isActive("underline"),
       strike: ed.isActive("strike"),
       link: ed.isActive("link"),
+      coloured: !!ed.getAttributes("textStyle").color,
+      highlighted: ed.isActive("highlight"),
+      alignLeft: ed.isActive({ textAlign: "left" }),
+      alignCenter: ed.isActive({ textAlign: "center" }),
+      alignRight: ed.isActive({ textAlign: "right" }),
     }),
   })
+  const [colorOpen, setColorOpen] = React.useState(false)
   const chain = () => editor.chain().focus()
+  const block = BLOCKS.find((b) => b.value === active?.block) ?? BLOCKS[0]
+  const bubbleBtn =
+    "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-lg text-secondary-foreground transition-colors hover:bg-secondary aria-pressed:bg-secondary data-popup-open:bg-secondary"
   const button = (
     label: string,
     pressed: boolean | undefined,
     onClick: () => void,
     child: React.ReactNode
   ) => (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={pressed}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={onClick}
-      className={controlClass}
-    >
-      {child}
-    </button>
+    <TooltipProvider key={label}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={label}
+              aria-pressed={pressed}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onClick}
+              className={bubbleBtn}
+            >
+              {child}
+            </button>
+          }
+        />
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   )
   return (
-    <div className="flex h-9 items-center gap-0.5 rounded-[10px] border border-border-soft bg-card p-1 shadow-elevation-lg">
-      {button("Bold", active?.bold, () => chain().toggleBold().run(), <span className="text-sm font-bold">B</span>)}
-      {button("Italic", active?.italic, () => chain().toggleItalic().run(), <span className="font-serif text-sm italic">I</span>)}
-      {button("Underline", active?.underline, () => chain().toggleUnderline().run(), <span className="text-sm underline">U</span>)}
-      {button("Strikethrough", active?.strike, () => chain().toggleStrike().run(), <span className="text-sm line-through">S</span>)}
-      <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-muted" />
+    <div
+      role="toolbar"
+      aria-label="Text formatting"
+      className="flex h-7 items-center rounded-[10px] bg-card p-0.5 shadow-elevation-md"
+    >
+      {/* the block style select, its 180px menu beneath */}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <button
+              type="button"
+              aria-label="Text style"
+              className="flex h-6 min-w-[100px] shrink-0 cursor-pointer items-center justify-between gap-1 rounded-[6px] py-1 pr-1 pl-1.5 text-secondary-foreground transition-colors hover:bg-secondary data-popup-open:bg-secondary"
+            >
+              <span className="text-sm leading-[15px] whitespace-nowrap">
+                {block.label}
+              </span>
+              <SmallDownIcon className="size-3.5 shrink-0" />
+            </button>
+          }
+        />
+        <DropdownMenuContent
+          align="start"
+          sideOffset={10}
+          className="w-[180px]"
+        >
+          {BLOCKS.map((item) => (
+            <DropdownMenuItem
+              key={item.value}
+              data-selected={active?.block === item.value || undefined}
+              className="data-selected:bg-secondary"
+              onClick={() => applyBlock(chain(), item.value)}
+            >
+              <item.Icon className="size-4" />
+              {item.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {button("Bold", active?.bold, () => chain().toggleBold().run(), <MarkBoldIcon className="size-3.5" />)}
+      {button("Italic", active?.italic, () => chain().toggleItalic().run(), <MarkItalicIcon className="size-3.5" />)}
+      {button("Underline", active?.underline, () => chain().toggleUnderline().run(), <MarkUnderlineIcon className="size-3.5" />)}
+      {button("Strikethrough", active?.strike, () => chain().toggleStrike().run(), <MarkStrikeIcon className="size-3.5" />)}
       {button("Link", active?.link, () => {
         if (editor.isActive("link")) {
           chain().extendMarkRange("link").unsetLink().run()
@@ -941,7 +1054,134 @@ function SelectionBar({ editor }: { editor: TiptapEditor }) {
         const href = window.prompt("Link URL")
         if (href) chain().extendMarkRange("link").setLink({ href }).run()
       }, <LinkIcon className="size-3.5" />)}
+
+      {/* colour: the picker card on a popover */}
+      <Popover open={colorOpen} onOpenChange={setColorOpen}>
+        <PopoverTrigger
+          className={undefined}
+          render={
+            <button
+              type="button"
+              aria-label="Text colour"
+              aria-pressed={active?.coloured}
+              onMouseDown={(event) => event.preventDefault()}
+              className={bubbleBtn}
+            >
+              <TextIcon className="size-3.5" />
+            </button>
+          }
+        />
+        <PopoverContent align="start" sideOffset={6} className="w-auto p-2">
+          <ColorPanel editor={editor} onPick={() => setColorOpen(false)} />
+        </PopoverContent>
+      </Popover>
+
+      {/* highlight: a marker, so it reads apart from the colour's A */}
+      {button("Highlight", active?.highlighted, () =>
+        chain().toggleHighlight({ color: highlightValue("yellow") }).run(),
+        <HighlightIcon className="size-3.5" />)}
+
+      <span
+        aria-hidden="true"
+        className="mx-1 h-4 w-px shrink-0 bg-border-soft"
+      />
+
+      {button("Align left", active?.alignLeft, () => chain().setTextAlign("left").run(), <AlignLeftIcon className="size-3.5" />)}
+      {button("Align centre", active?.alignCenter, () => chain().setTextAlign("center").run(), <AlignCenterIcon className="size-3.5" />)}
+      {button("Align right", active?.alignRight, () => chain().setTextAlign("right").run(), <AlignRightIcon className="size-3.5" />)}
     </div>
+  )
+}
+
+
+/** the popup over a clicked link: open it, change it, or take it off */
+function LinkClickPopup({ editor }: { editor: TiptapEditor }) {
+  const [panel, setPanel] = React.useState<{
+    x: number
+    y: number
+    href: string
+    pos: number
+  } | null>(null)
+  React.useEffect(() => {
+    const dom = editor.view.dom
+    const onClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      const link = target?.closest?.("a[href]:not([data-attachment])")
+      if (!link || !dom.contains(link)) {
+        setPanel(null)
+        return
+      }
+      event.preventDefault()
+      const rect = link.getBoundingClientRect()
+      let pos: number | null = null
+      try {
+        pos = editor.view.posAtDOM(link, 0)
+      } catch {
+        pos = null
+      }
+      if (pos === null) return
+      setPanel({
+        x: rect.left,
+        y: rect.bottom + 6,
+        href: link.getAttribute("href") ?? "",
+        pos,
+      })
+    }
+    dom.addEventListener("click", onClick)
+    return () => dom.removeEventListener("click", onClick)
+  }, [editor])
+  React.useEffect(() => {
+    if (!panel) return
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPanel(null)
+    }
+    window.addEventListener("keydown", close)
+    return () => window.removeEventListener("keydown", close)
+  }, [panel])
+  if (!panel) return null
+  const onLink = (edit: (chain: ChainedCommands) => ChainedCommands) => {
+    const tr = editor.view.state.tr.setSelection(
+      TextSelection.create(editor.view.state.doc, panel.pos + 1)
+    )
+    editor.view.dispatch(tr)
+    edit(editor.chain().focus().extendMarkRange("link")).run()
+    setPanel(null)
+  }
+  return createPortal(
+    <div
+      data-slot="rich-text-editor-link-popup"
+      className="fixed z-70 flex max-w-96 items-center gap-1 rounded-xl border border-border-soft bg-card p-1.5 shadow-elevation-lg"
+      style={{ left: panel.x, top: panel.y }}
+    >
+      <span className="min-w-0 flex-1 truncate px-1 text-sm text-secondary-foreground">
+        {panel.href}
+      </span>
+      <Button
+        size="xs"
+        variant="ghost"
+        onClick={() => window.open(panel.href, "_blank", "noopener")}
+      >
+        Open
+      </Button>
+      <Button
+        size="xs"
+        variant="ghost"
+        onClick={() => {
+          const href = window.prompt("Link URL", panel.href)
+          if (href) onLink((chain) => chain.setLink({ href }))
+        }}
+      >
+        Edit
+      </Button>
+      <Button
+        size="xs"
+        variant="ghost"
+        onClick={() => onLink((chain) => chain.unsetLink())}
+      >
+        Remove
+      </Button>
+    </div>,
+    document.body
   )
 }
 
@@ -975,9 +1215,19 @@ const docClassName = cn(
   "[&_.ProseMirror_ul[data-type=taskList]_input]:size-4 [&_.ProseMirror_ul[data-type=taskList]_input]:cursor-pointer [&_.ProseMirror_ul[data-type=taskList]_input]:appearance-none [&_.ProseMirror_ul[data-type=taskList]_input]:rounded-2xs [&_.ProseMirror_ul[data-type=taskList]_input]:border [&_.ProseMirror_ul[data-type=taskList]_input]:border-card-foreground [&_.ProseMirror_ul[data-type=taskList]_input]:bg-background [&_.ProseMirror_ul[data-type=taskList]_input]:transition-all [&_.ProseMirror_ul[data-type=taskList]_input]:duration-[250ms] [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:border-accent-foreground [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:shadow-elevation-sm [&_.ProseMirror_ul[data-type=taskList]_input:active]:scale-[0.97]",
   "[&_.ProseMirror_ul[data-type=taskList]_input:checked]:border-transparent [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-primary [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22%23FFFFFF%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M20%206%209%2017l-5-5%22/%3E%3C/svg%3E')] [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-size-[12px] [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-center [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-no-repeat [&_.ProseMirror_ul[data-type=taskList]_input:checked:hover]:bg-primary/86",
   "dark:[&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22%23171717%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M20%206%209%2017l-5-5%22/%3E%3C/svg%3E')]",
-  // table
-  "[&_.ProseMirror_table]:my-2 [&_.ProseMirror_table]:w-full [&_.ProseMirror_table]:border-collapse [&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-border-soft [&_.ProseMirror_td]:px-2.5 [&_.ProseMirror_td]:py-1.5 [&_.ProseMirror_th]:border [&_.ProseMirror_th]:border-border-soft [&_.ProseMirror_th]:bg-transparent [&_.ProseMirror_th]:px-2.5 [&_.ProseMirror_th]:py-1.5 [&_.ProseMirror_th]:text-left [&_.ProseMirror_th]:font-normal [&_.ProseMirror_th]:text-muted-foreground",
+  // tables as the file draws them: the card is the table's viewport — a
+  // 1px rule on a 12px radius, a table grown past it scrolls inside it —
+  // and inside, a gray-100 grid whose outer rules the card draws
+  "[&_.ProseMirror_.tableWrapper]:my-4 [&_.ProseMirror_.tableWrapper]:overflow-x-auto [&_.ProseMirror_.tableWrapper]:overflow-y-hidden [&_.ProseMirror_.tableWrapper]:rounded-xl [&_.ProseMirror_.tableWrapper]:border [&_.ProseMirror_.tableWrapper]:border-border-soft",
+  "[&_.ProseMirror_table]:m-0 [&_.ProseMirror_table]:w-full [&_.ProseMirror_table]:min-w-full [&_.ProseMirror_table]:border-separate [&_.ProseMirror_table]:border-spacing-0 [&_.ProseMirror_table]:text-base [&_.ProseMirror_table]:leading-[21px]",
+  "[&_.ProseMirror_td]:h-10 [&_.ProseMirror_td]:border-0 [&_.ProseMirror_td]:border-r [&_.ProseMirror_td]:border-b [&_.ProseMirror_td]:border-border-soft [&_.ProseMirror_td]:bg-transparent [&_.ProseMirror_td]:px-2 [&_.ProseMirror_td]:py-1.5 [&_.ProseMirror_td]:text-left [&_.ProseMirror_td]:align-middle",
+  "[&_.ProseMirror_th]:h-8 [&_.ProseMirror_th]:border-0 [&_.ProseMirror_th]:border-r [&_.ProseMirror_th]:border-b [&_.ProseMirror_th]:border-border-soft [&_.ProseMirror_th]:bg-transparent [&_.ProseMirror_th]:px-2 [&_.ProseMirror_th]:py-1.5 [&_.ProseMirror_th]:text-left [&_.ProseMirror_th]:align-middle [&_.ProseMirror_th]:font-normal",
+  "[&_.ProseMirror_tr>*:last-child]:border-r-0 [&_.ProseMirror_tr:last-child>*]:border-b-0",
+  "[&_.ProseMirror_td_p]:text-base [&_.ProseMirror_td_p]:leading-[21px] [&_.ProseMirror_td_p]:text-secondary-foreground [&_.ProseMirror_th_p]:text-[13px] [&_.ProseMirror_th_p]:leading-[15px] [&_.ProseMirror_th_p]:text-muted-foreground",
   "[&_.ProseMirror_.selectedCell]:bg-blue-50 dark:[&_.ProseMirror_.selectedCell]:bg-blue-900/30",
+  // a block picked up by its grip, or selected by a click on it: a
+  // gray-100 ground 4px past its edges
+  "[&_.ProseMirror_.ProseMirror-selectednode:not(img)]:rounded-[4px] [&_.ProseMirror_.ProseMirror-selectednode:not(img)]:bg-secondary [&_.ProseMirror_.ProseMirror-selectednode:not(img)]:shadow-[0_0_0_4px_var(--secondary)]",
   // columns: side by side on a 24px gutter, a hairline between
   "[&_.ProseMirror_div[data-type=columns]]:my-2 [&_.ProseMirror_div[data-type=columns]]:grid [&_.ProseMirror_div[data-type=columns]]:gap-6",
   "[&_.ProseMirror_div[data-type=columns][data-count='2']]:grid-cols-2 [&_.ProseMirror_div[data-type=columns][data-count='3']]:grid-cols-3 [&_.ProseMirror_div[data-type=columns][data-count='4']]:grid-cols-4",
@@ -992,7 +1242,7 @@ const docClassName = cn(
   // a mention: gray chip, as the file marks a person
   "[&_.ProseMirror_.mention]:rounded-[4px] [&_.ProseMirror_.mention]:bg-secondary [&_.ProseMirror_.mention]:px-[3px] [&_.ProseMirror_.mention]:text-foreground",
   // audio and embeds
-  "[&_.ProseMirror_audio]:my-2 [&_.ProseMirror_audio]:w-full [&_.ProseMirror_div[data-type=embed]]:my-2 [&_.ProseMirror_div[data-type=embed]_iframe]:aspect-video [&_.ProseMirror_div[data-type=embed]_iframe]:w-full [&_.ProseMirror_div[data-type=embed]_iframe]:rounded-lg [&_.ProseMirror_div[data-type=embed]_iframe]:border [&_.ProseMirror_div[data-type=embed]_iframe]:border-border-soft",
+  "[&_.ProseMirror_video]:my-2 [&_.ProseMirror_video]:w-full [&_.ProseMirror_video]:rounded-lg [&_.ProseMirror_audio]:my-2 [&_.ProseMirror_audio]:w-full [&_.ProseMirror_div[data-type=embed]]:my-2 [&_.ProseMirror_div[data-type=embed]_iframe]:aspect-video [&_.ProseMirror_div[data-type=embed]_iframe]:w-full [&_.ProseMirror_div[data-type=embed]_iframe]:rounded-lg [&_.ProseMirror_div[data-type=embed]_iframe]:border [&_.ProseMirror_div[data-type=embed]_iframe]:border-border-soft",
   // expand/collapse: the summary row with its turning chevron
   "[&_.ProseMirror_[data-type=details]]:my-1 [&_.ProseMirror_[data-type=details]]:flex [&_.ProseMirror_[data-type=details]]:gap-1 [&_.ProseMirror_[data-type=details]>button]:mt-1 [&_.ProseMirror_[data-type=details]>button]:flex [&_.ProseMirror_[data-type=details]>button]:size-5 [&_.ProseMirror_[data-type=details]>button]:shrink-0 [&_.ProseMirror_[data-type=details]>button]:cursor-pointer [&_.ProseMirror_[data-type=details]>button]:items-center [&_.ProseMirror_[data-type=details]>button]:justify-center [&_.ProseMirror_[data-type=details]>button]:rounded-sm [&_.ProseMirror_[data-type=details]>button]:text-muted-foreground [&_.ProseMirror_[data-type=details]>button:hover]:bg-secondary [&_.ProseMirror_[data-type=details]>button]:before:transition-transform [&_.ProseMirror_[data-type=details]>button]:before:content-['▸'] [&_.ProseMirror_[data-type=details][open]>button]:before:rotate-90",
   "[&_.ProseMirror_[data-type=details]>div]:min-w-0 [&_.ProseMirror_[data-type=details]>div]:flex-1 [&_.ProseMirror_[data-type=details]_summary]:cursor-pointer [&_.ProseMirror_[data-type=details]_summary]:list-none [&_.ProseMirror_[data-type=details]_summary]:font-medium [&_.ProseMirror_[data-type=details]_summary]:text-foreground [&_.ProseMirror_[data-type=details]_summary::-webkit-details-marker]:hidden"
@@ -1034,6 +1284,7 @@ export function RichTextEditor({
           {editor && editable && <RichTextToolbar editor={editor} />}
           {editor && editable && <BlockHandle editor={editor} />}
           {editor && editable && <TableControls editor={editor} />}
+          {editor && editable && <LinkClickPopup editor={editor} />}
           {editor && editable && (
             <BubbleMenu
               editor={editor}
@@ -1042,6 +1293,9 @@ export function RichTextEditor({
                 const { selection } = state
                 if (selection.empty || "node" in selection || !ed.isEditable)
                   return false
+                // a selected row, column or run of cells has the table's
+                // own menus
+                if ("$anchorCell" in selection) return false
                 return state.doc.textBetween(from, to).length > 0
               }}
               className="z-60"

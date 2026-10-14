@@ -13,7 +13,7 @@ import { TaskItem, TaskList } from "@tiptap/extension-list"
 import Mention from "@tiptap/extension-mention"
 import Subscript from "@tiptap/extension-subscript"
 import Superscript from "@tiptap/extension-superscript"
-import { TableKit } from "@tiptap/extension-table"
+import { TableCell, TableHeader, TableKit } from "@tiptap/extension-table"
 import TextAlign from "@tiptap/extension-text-align"
 import {
   Color,
@@ -29,6 +29,7 @@ import {
   Attachment,
   Audio,
   Callout,
+  Video,
   Column,
   Columns,
   Embed,
@@ -93,8 +94,37 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
     if (options.image !== false) extensions.push(Image)
     if (options.textAlign !== false)
       extensions.push(TextAlign.configure({ types: ["paragraph", "heading"] }))
-    if (options.table !== false)
-      extensions.push(TableKit.configure({ table: { resizable: true } }))
+    if (options.table !== false) {
+      // the cells carry the menu's colour as an attribute
+      const colouredCell = {
+        backgroundColor: {
+          default: null as string | null,
+          parseHTML: (el: HTMLElement) =>
+            el.style.backgroundColor || null,
+          renderHTML: (attrs: Record<string, unknown>) =>
+            attrs.backgroundColor
+              ? { style: `background-color: ${attrs.backgroundColor}` }
+              : {},
+        },
+      }
+      extensions.push(
+        TableKit.configure({
+          table: { resizable: true },
+          tableCell: false,
+          tableHeader: false,
+        }),
+        TableCell.extend({
+          addAttributes() {
+            return { ...this.parent?.(), ...colouredCell }
+          },
+        }),
+        TableHeader.extend({
+          addAttributes() {
+            return { ...this.parent?.(), ...colouredCell }
+          },
+        })
+      )
+    }
     if (options.taskList !== false)
       extensions.push(TaskList, TaskItem.configure({ nested: true }))
     if (options.details !== false)
@@ -117,7 +147,7 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
     if (options.audio !== false) extensions.push(Audio)
     if (options.embed !== false) extensions.push(Embed)
     if (options.video !== false)
-      extensions.push(Youtube.configure({ nocookie: true }))
+      extensions.push(Youtube.configure({ nocookie: true }), Video)
     if (options.subscript !== false) extensions.push(Subscript)
     if (options.superscript !== false) extensions.push(Superscript)
     if (options.mention !== false)

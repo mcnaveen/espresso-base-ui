@@ -7,7 +7,7 @@
       "name": "editor",
       "type": "registry:ui",
       "title": "Editor",
-      "description": "The editor molecule — an EditorProvider core, the RichTextKit extension bundle, the field editor (outline/subtle/ghost) and the full document editor with block drag, table controls, mentions and slash commands.",
+      "description": "The editor molecule \u2014 an EditorProvider core, the RichTextKit extension bundle, the field editor (outline/subtle/ghost) and the full document editor with block drag, table controls, mentions and slash commands.",
       "dependencies": [
         "@tiptap/react",
         "@tiptap/pm",
@@ -94,7 +94,7 @@
       "name": "emoji-picker",
       "type": "registry:ui",
       "title": "Emoji Picker",
-      "description": "A searchable emoji picker in a popover — button trigger, name search over the full emoji set, tap-friendly grid.",
+      "description": "A searchable emoji picker in a popover \u2014 button trigger, name search over the full emoji set, tap-friendly grid.",
       "dependencies": [
         "@base-ui/react",
         "lucide-react"
@@ -114,6 +114,139 @@
         {
           "path": "registry/espresso/emoji-picker/emoji-picker-data.ts",
           "type": "registry:ui"
+        }
+      ]
+    },
+    {
+      "name": "event",
+      "type": "registry:ui",
+      "title": "Event",
+      "description": "A full calendar: Month, Week, Day and Agenda views with drag to move, resize, overlap layout and an editable event model \u2014 frappe-ui's Calendar, ported to React on espresso primitives.",
+      "dependencies": [],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/calendar.json",
+        "https://espresso-base-ui.vercel.app/r/checkbox.json",
+        "https://espresso-base-ui.vercel.app/r/dialog.json",
+        "https://espresso-base-ui.vercel.app/r/input.json",
+        "https://espresso-base-ui.vercel.app/r/label.json",
+        "https://espresso-base-ui.vercel.app/r/popover.json",
+        "https://espresso-base-ui.vercel.app/r/select.json",
+        "https://espresso-base-ui.vercel.app/r/spinner.json",
+        "https://espresso-base-ui.vercel.app/r/tabs.json",
+        "https://espresso-base-ui.vercel.app/r/tooltip.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/event/agenda-days.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/agenda-days.ts"
+        },
+        {
+          "path": "registry/espresso/event/context.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/context.tsx"
+        },
+        {
+          "path": "registry/espresso/event/event-modal.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/event-modal.tsx"
+        },
+        {
+          "path": "registry/espresso/event/event-popover.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/event-popover.tsx"
+        },
+        {
+          "path": "registry/espresso/event/event.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/event.tsx"
+        },
+        {
+          "path": "registry/espresso/event/grid-pill.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/grid-pill.tsx"
+        },
+        {
+          "path": "registry/espresso/event/hooks.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/hooks.ts"
+        },
+        {
+          "path": "registry/espresso/event/index.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/index.ts"
+        },
+        {
+          "path": "registry/espresso/event/month-pill.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/month-pill.tsx"
+        },
+        {
+          "path": "registry/espresso/event/month-strip.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/month-strip.ts"
+        },
+        {
+          "path": "registry/espresso/event/month-year-calendar.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/month-year-calendar.tsx"
+        },
+        {
+          "path": "registry/espresso/event/row.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/row.ts"
+        },
+        {
+          "path": "registry/espresso/event/span.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/span.ts"
+        },
+        {
+          "path": "registry/espresso/event/styles.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/styles.tsx"
+        },
+        {
+          "path": "registry/espresso/event/time-marker.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/time-marker.tsx"
+        },
+        {
+          "path": "registry/espresso/event/types.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/types.ts"
+        },
+        {
+          "path": "registry/espresso/event/use-event-base.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/use-event-base.ts"
+        },
+        {
+          "path": "registry/espresso/event/utils.ts",
+          "type": "registry:ui",
+          "target": "components/ui/event/utils.ts"
+        },
+        {
+          "path": "registry/espresso/event/view-agenda.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/view-agenda.tsx"
+        },
+        {
+          "path": "registry/espresso/event/view-day.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/view-day.tsx"
+        },
+        {
+          "path": "registry/espresso/event/view-month.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/view-month.tsx"
+        },
+        {
+          "path": "registry/espresso/event/view-week.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/event/view-week.tsx"
         }
       ]
     },

@@ -72,6 +72,7 @@ import {
   User,
   Workflow,
   Zap,
+  CalendarDays,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
@@ -156,6 +157,7 @@ const components = [
   { label: "Drawer", href: "/ui/drawer", icon: PanelBottom },
   { label: "Editor", href: "/ui/editor", icon: SquarePen },
   { label: "Emoji Picker", href: "/ui/emoji-picker", icon: Smile },
+  { label: "Event", href: "/ui/event", icon: CalendarDays },
   { label: "Dropdown Menu", href: "/ui/dropdown-menu", icon: ChevronDown },
   { label: "Empty", href: "/ui/empty", icon: Box },
   { label: "Field", href: "/ui/field", icon: FormInput },

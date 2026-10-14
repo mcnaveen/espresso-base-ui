@@ -19,7 +19,12 @@ import Suggestion, { type SuggestionProps } from "@tiptap/suggestion"
 
 import { cn } from "@/lib/utils"
 import {
+  AudioWavesIcon,
   CodeIcon,
+  FileUploadIcon,
+  GroupIcon,
+  ImageIcon,
+  VideoIcon,
   DividerIcon,
   Grid2Icon,
   Grid3Icon,
@@ -126,6 +131,25 @@ export const Audio = Node.create({
 })
 
 // an embed: any page in a frame
+// a video file, as a plain player for the carried file
+export const Video = Node.create({
+  name: "video",
+  group: "block",
+  atom: true,
+  draggable: true,
+  addAttributes() {
+    return {
+      src: { default: null },
+      title: { default: null },
+    }
+  },
+  parseHTML: () => [{ tag: "video[src]" }],
+  renderHTML: ({ HTMLAttributes }) => [
+    "video",
+    mergeAttributes(HTMLAttributes, { controls: "true" }),
+  ],
+})
+
 export const Embed = Node.create({
   name: "embed",
   group: "block",
@@ -288,7 +312,20 @@ export function suggestionPopup() {
   }
 }
 
+const pick = (slot: string) => () =>
+  (
+    document.querySelector(`[data-slot=${slot}]`) as HTMLElement | null
+  )?.click()
+
 export const SLASH_ITEMS: SuggestItem[] = [
+  { id: "image", label: "Image", icon: <ImageIcon className="size-4" />, run: () => pick("rte-image-input")() },
+  { id: "video", label: "Video", icon: <VideoIcon className="size-4" />, run: () => pick("rte-video-input")() },
+  { id: "audio", label: "Audio", icon: <AudioWavesIcon className="size-4" />, run: () => pick("rte-audio-input")() },
+  { id: "file", label: "File", icon: <FileUploadIcon className="size-4" />, run: () => pick("rte-attach-input")() },
+  { id: "embed", label: "Embed", icon: <GroupIcon className="size-4" />, run: (ed) => {
+    const src = window.prompt("Embed URL")
+    if (src) ed.chain().focus().insertContent({ type: "embed", attrs: { src } }).run()
+  } },
   { id: "table", label: "Table", icon: <TableViewIcon className="size-4" />, run: (ed) => ed.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
   { id: "quote", label: "Quote", icon: <QuoteIcon className="size-4" />, run: (ed) => ed.chain().focus().toggleBlockquote().run() },
   { id: "code", label: "Code block", icon: <CodeIcon className="size-4" />, run: (ed) => ed.chain().focus().toggleCodeBlock().run() },
