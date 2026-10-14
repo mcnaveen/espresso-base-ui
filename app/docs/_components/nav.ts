@@ -28,6 +28,7 @@ export const docsComponents = [
   { label: "Drawer", href: "/docs/components/drawer" },
   { label: "Dropdown Menu", href: "/docs/components/dropdown-menu" },
   { label: "Editor", href: "/docs/components/editor" },
+  { label: "Event", href: "/docs/components/event" },
   { label: "Empty", href: "/docs/components/empty" },
   { label: "Field", href: "/docs/components/field" },
   { label: "File Upload", href: "/docs/components/file-upload" },
