@@ -173,6 +173,13 @@ export function EventMonthly({
     null
   )
 
+  /**
+   * The bar the pointer is on, as an event: a stay across weeks is one piece
+   * per row, and pointing at any of them should light the whole of it —
+   * :hover only ever knows the piece.
+   */
+  const [hoverId, setHoverId] = React.useState<CalendarEvent["id"] | null>(null)
+
   function dateAtPointer(row: HTMLElement, clientX: number, week: Date[]) {
     const rect = row.getBoundingClientRect()
     const col = Math.floor(((clientX - rect.left) / rect.width) * 7)
@@ -334,12 +341,19 @@ export function EventMonthly({
                   dense={isNarrow}
                   className={cn(
                     "absolute cursor-pointer",
-                    draggingId === bar.event.id && "opacity-40"
+                    draggingId === bar.event.id && "opacity-40",
+                    hoverId != null &&
+                      hoverId === bar.event.id &&
+                      "ec-hover-all"
                   )}
                   style={barStyle(bar)}
                   draggable={config.isEditMode}
                   onDragStart={onDragStart(bar.event, row.week)}
                   onDragEnd={() => setDraggingId(null)}
+                  onMouseEnter={() => setHoverId(bar.event.id ?? null)}
+                  onMouseLeave={() =>
+                    setHoverId((id) => (id === bar.event.id ? null : id))
+                  }
                 />
               ))}
             </div>

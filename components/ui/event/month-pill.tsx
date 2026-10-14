@@ -23,6 +23,8 @@ export function EventMonthPill({
   draggable,
   onDragStart,
   onDragEnd,
+  onMouseEnter,
+  onMouseLeave,
 }: {
   event: CalendarEvent
   date: Date
@@ -33,6 +35,8 @@ export function EventMonthPill({
   draggable?: boolean
   onDragStart?: (e: React.DragEvent) => void
   onDragEnd?: (e: React.DragEvent) => void
+  onMouseEnter?: (e: React.MouseEvent) => void
+  onMouseLeave?: (e: React.MouseEvent) => void
 }) {
   const context = useEventContext("EventMonthPill")
   const {
@@ -80,6 +84,8 @@ export function EventMonthPill({
           draggable={draggable}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
           onClick={(e) => {
             e.stopPropagation()
             handleEventClick(e, () => setPopoverOpen((o) => !o), isPopoverOpen)

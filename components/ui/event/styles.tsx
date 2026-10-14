@@ -157,6 +157,12 @@ const CSS = `
 .ec-scope [data-time-grid] .event[data-rested]:not(.active) {
   background-color: var(--bg) !important;
 }
+/* Pointing at any piece of a bar across weeks lights the whole of it. */
+@media (hover: hover) {
+  .ec-scope [data-week-row] .event.ec-hover-all {
+    background-color: var(--bg-active) !important;
+  }
+}
 /* Month's: every week's piece of a bar whose edge is being pulled, and
    each of them resting once it is let go. */
 .ec-scope [data-week-row] .event[data-pulled] {
