@@ -15,10 +15,13 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { AddIcon, DragIcon } from "@/components/ui/rich-text-editor-icons"
-import { type View } from "./extensions"
+import { AddIcon } from "@/components/ui/rich-text-editor-icons"
+import { hue, PALETTE, type View } from "./extensions"
 
 function tableInfoOf(view: View, cellEl: HTMLElement) {
   let p: number
@@ -113,6 +116,8 @@ function moveColumnTr(
 export function TableControls({ editor }: { editor: TiptapEditor }) {
   const [cell, setCell] = React.useState<HTMLElement | null>(null)
   const [menuOpen, setMenuOpen] = React.useState<"row" | "col" | null>(null)
+  // a release that ends a drag is not a click: the menu stays shut
+  const justDraggedRef = React.useRef(false)
   const [, bump] = React.useReducer((n: number) => n + 1, 0)
   const layerRef = React.useRef<HTMLDivElement>(null)
   const cellRef = React.useRef<HTMLElement | null>(null)
@@ -123,6 +128,8 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     startX: number
     startY: number
     line: HTMLElement | null
+    ghost: HTMLElement | null
+    grab: { dx: number; dy: number }
     target: number
   } | null>(null)
   const [mounted, setMounted] = React.useState(false)
@@ -251,6 +258,55 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     }
     setMenuOpen(null)
   }
+  const setColour = (kind: "row" | "col", name: string | null) => {
+    focusCell()
+    const { state } = editor.view
+    const table = state.doc.nodeAt(info.tablePos)
+    if (!table) return
+    const value = name ? `var(--color-${hue(name)}-100)` : null
+    const tr = state.tr
+    let rowPos = info.tablePos + 1
+    table.forEach((row, _offset, i) => {
+      let cellPos = rowPos + 1
+      row.forEach((c, _o, j) => {
+        if (
+          (kind === "row" && i === rowIndex) ||
+          (kind === "col" && j === colIndex)
+        )
+          tr.setNodeMarkup(cellPos, undefined, {
+            ...c.attrs,
+            backgroundColor: value,
+          })
+        cellPos += c.nodeSize
+      })
+      rowPos += row.nodeSize
+    })
+    editor.view.dispatch(tr)
+    setMenuOpen(null)
+  }
+  const colourMenu = (kind: "row" | "col") => (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>Colour</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent>
+        <DropdownMenuItem onClick={() => setColour(kind, null)}>
+          <span className="size-3.5 rounded-sm border border-border-soft bg-background" />
+          Default
+        </DropdownMenuItem>
+        {PALETTE.map((name) => (
+          <DropdownMenuItem key={name} onClick={() => setColour(kind, name)}>
+            <span
+              className="size-3.5 rounded-sm border"
+              style={{
+                backgroundColor: `var(--color-${hue(name)}-100)`,
+                borderColor: `var(--color-${hue(name)}-200)`,
+              }}
+            />
+            {name.charAt(0).toUpperCase() + name.slice(1)}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  )
   const clearContent = (kind: "row" | "col") => {
     focusCell()
     const { state } = editor.view
@@ -278,6 +334,10 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
   // ---- a grip dragged carries its row or column
   const startDrag = (kind: "row" | "col") => (event: React.PointerEvent) => {
     if (event.button !== 0) return
+    // the press is ours alone: the menu opens on a clean click (release
+    // without a drag), never on the way down
+    event.preventDefault()
+    event.stopPropagation()
     dragRef.current = {
       kind,
       index: kind === "row" ? rowIndex : colIndex,
@@ -285,6 +345,8 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
       startX: event.clientX,
       startY: event.clientY,
       line: null,
+      ghost: null,
+      grab: { dx: 0, dy: 0 },
       target: kind === "row" ? rowIndex : colIndex,
     }
     const onPointerMove = (m: PointerEvent) => {
@@ -297,13 +359,99 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
         return
       if (!d.started) {
         d.started = true
+        // whatever menu the pointerdown opened steps aside: this press is
+        // a drag
+        setMenuOpen(null)
+        // the landing line: 3px rounded gray-900, easing to each new edge
         const line = document.createElement("div")
         line.className =
-          "pointer-events-none fixed z-65 rounded-full bg-border-stronger"
+          "pointer-events-none fixed z-75 rounded-full bg-border-stronger opacity-0"
+        line.style.transition =
+          "top 120ms cubic-bezier(0.2, 0, 0, 1), left 120ms cubic-bezier(0.2, 0, 0, 1), opacity 120ms"
         document.body.appendChild(line)
         d.line = line
-        document.body.classList.add("select-none!")
+        // the ghost: the row or column lifted onto the card's surface
+        // under the lg shadow, following the pointer at the grab offset
+        const ghost = document.createElement("div")
+        ghost.className =
+          "pointer-events-none fixed top-0 left-0 z-70 overflow-hidden rounded-md border border-border-soft bg-card opacity-0 shadow-elevation-lg transition-opacity duration-150 will-change-transform"
+        const ghostTable = document.createElement("table")
+        ghostTable.style.borderCollapse = "separate"
+        ghostTable.style.borderSpacing = "0"
+        ghostTable.style.margin = "0"
+        const cloneCell = (cell: HTMLTableCellElement, last: boolean) => {
+          const copy = cell.cloneNode(true) as HTMLTableCellElement
+          const r = cell.getBoundingClientRect()
+          const cs = getComputedStyle(cell)
+          copy.style.width = `${r.width}px`
+          copy.style.height = `${r.height}px`
+          copy.style.border = "0"
+          if (!last)
+            copy.style[d.kind === "row" ? "borderRight" : "borderBottom"] =
+              "1px solid var(--border-soft)"
+          copy.style.padding = cs.padding
+          copy.style.fontFamily = cs.fontFamily
+          copy.style.fontSize = cs.fontSize
+          copy.style.fontWeight = cs.fontWeight
+          copy.style.lineHeight = cs.lineHeight
+          copy.style.color = cs.color
+          copy.style.textAlign = cs.textAlign
+          copy.style.verticalAlign = cs.verticalAlign
+          copy.style.backgroundColor = "transparent"
+          // the inner paragraphs lose the document's styles outside the
+          // editor: carry each one's own type with it
+          const sourceParagraphs = cell.querySelectorAll("p")
+          copy.querySelectorAll("p").forEach((paragraph, i) => {
+            const source = sourceParagraphs[i]
+            if (!source) return
+            const ps = getComputedStyle(source)
+            paragraph.style.fontFamily = ps.fontFamily
+            paragraph.style.fontSize = ps.fontSize
+            paragraph.style.fontWeight = ps.fontWeight
+            paragraph.style.lineHeight = ps.lineHeight
+            paragraph.style.color = ps.color
+            paragraph.style.margin = "0"
+          })
+          return copy
+        }
+        if (d.kind === "row") {
+          const sourceRow = tableEl.rows[d.index]
+          const rr = sourceRow.getBoundingClientRect()
+          const tr = document.createElement("tr")
+          const cells = [...sourceRow.cells]
+          cells.forEach((cell, i) =>
+            tr.appendChild(cloneCell(cell, i === cells.length - 1))
+          )
+          ghostTable.appendChild(tr)
+          d.grab = { dx: d.startX - rr.left, dy: d.startY - rr.top }
+        } else {
+          const rows = [...tableEl.rows]
+          rows.forEach((row, i) => {
+            const cell = row.cells[d.index]
+            if (!cell) return
+            const tr = document.createElement("tr")
+            tr.appendChild(cloneCell(cell, i === rows.length - 1))
+            ghostTable.appendChild(tr)
+          })
+          const cr = tableEl.rows[0].cells[d.index].getBoundingClientRect()
+          d.grab = {
+            dx: d.startX - cr.left,
+            dy: d.startY - tableEl.getBoundingClientRect().top,
+          }
+        }
+        ghost.appendChild(ghostTable)
+        document.body.appendChild(ghost)
+        requestAnimationFrame(() => {
+          ghost.classList.remove("opacity-0")
+          ghost.classList.add("opacity-85")
+        })
+        d.ghost = ghost
+        document.body.classList.add("select-none!", "cursor-grabbing!")
       }
+      if (d.ghost)
+        d.ghost.style.transform = `translate(${m.clientX - d.grab.dx}px, ${
+          m.clientY - d.grab.dy
+        }px)`
       const rect = tableEl.getBoundingClientRect()
       if (d.kind === "row") {
         const rows = [...tableEl.rows]
@@ -323,6 +471,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
           d.line.style.width = `${rect.width}px`
           d.line.style.height = "3px"
           d.line.style.top = `${edge - 1.5}px`
+          d.line.style.opacity = "1"
         }
       } else {
         const cells = [...tableEl.rows[0].cells]
@@ -342,18 +491,40 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
           d.line.style.height = `${rect.height}px`
           d.line.style.width = "3px"
           d.line.style.left = `${edge - 1.5}px`
+          d.line.style.opacity = "1"
         }
       }
     }
-    const onPointerUp = () => {
+    const onPointerUp = (up: PointerEvent) => {
       const d = dragRef.current
       dragRef.current = null
       document.removeEventListener("pointermove", onPointerMove)
       document.removeEventListener("pointerup", onPointerUp)
-      document.body.classList.remove("select-none!")
+      document.body.classList.remove("select-none!", "cursor-grabbing!")
       if (!d) return
       d.line?.remove()
-      if (!d.started) return
+      d.ghost?.remove()
+      if (!d.started) {
+        // a clean click: the menu opens here
+        setMenuOpen(kind)
+        return
+      }
+      justDraggedRef.current = true
+      setTimeout(() => {
+        justDraggedRef.current = false
+      }, 0)
+      // the move rebuilds the table's DOM: whatever menu the pointerdown
+      // opened closes, and the cell under the pointer is read afresh so
+      // the grips come straight back
+      setMenuOpen(null)
+      setTimeout(() => {
+        const el =
+          (document
+            .elementFromPoint(up.clientX, up.clientY)
+            ?.closest("td, th") as HTMLElement | null) ?? null
+        cellRef.current = el
+        setCell(el)
+      }, 0)
       // a drop past the source means one slot less once it leaves
       let to = d.target
       if (to > d.index) to -= 1
@@ -361,17 +532,24 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
         d.kind === "row"
           ? moveRowTr(editor.view.state, info.tablePos, d.index, to)
           : moveColumnTr(editor.view.state, info.tablePos, d.index, to)
-      if (tr) {
-        editor.view.dispatch(tr.scrollIntoView())
-        editor.view.focus()
-      }
+      // dispatched as is: a scroll-into-view here would carry the page
+      // off to wherever the caret last was
+      if (tr) editor.view.dispatch(tr)
     }
     document.addEventListener("pointermove", onPointerMove)
     document.addEventListener("pointerup", onPointerUp)
   }
 
   const gripClass =
-    "pointer-events-auto fixed z-56 flex items-center justify-center rounded-full border border-background bg-border-normal text-background opacity-90 transition-colors hover:bg-border-strong data-popup-open:bg-border-strong"
+    "group pointer-events-auto fixed z-56 cursor-grab rounded-[4px] border border-transparent transition-colors hover:bg-border-strong data-popup-open:bg-border-strong active:cursor-grabbing"
+  const dashClass =
+    "absolute rounded-full bg-foreground shadow-[0_0_0_2px_var(--background)] group-hover:hidden group-data-popup-open:hidden"
+  const dotsClass =
+    "absolute -inset-px hidden group-hover:block group-data-popup-open:block"
+  const ROW_DOTS =
+    "radial-gradient(circle at 5px 5px, #fff 1.5px, transparent 1.75px), radial-gradient(circle at 5px 10px, #fff 1.5px, transparent 1.75px), radial-gradient(circle at 5px 15px, #fff 1.5px, transparent 1.75px)"
+  const COL_DOTS =
+    "radial-gradient(circle at 5px 5px, #fff 1.5px, transparent 1.75px), radial-gradient(circle at 10px 5px, #fff 1.5px, transparent 1.75px), radial-gradient(circle at 15px 5px, #fff 1.5px, transparent 1.75px)"
 
   return createPortal(
     <div
@@ -382,7 +560,11 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
       {/* the row's grip, at the left edge of the row */}
       <DropdownMenu
         open={menuOpen === "row"}
-        onOpenChange={(open) => setMenuOpen(open ? "row" : null)}
+        onOpenChange={(open) => {
+          if (open && (justDraggedRef.current || dragRef.current?.started))
+            return
+          setMenuOpen(open ? "row" : null)
+        }}
       >
         <DropdownMenuTrigger
           render={
@@ -394,18 +576,28 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
                 left: rowRect.left - 5,
                 top: rowRect.top + rowRect.height / 2 - 10,
               }}
-              className={cn(gripClass, "h-5 w-2.5 cursor-grab active:cursor-grabbing")}
+              className={cn(gripClass, "h-5 w-[10px]")}
             >
-              <DragIcon className="size-3" />
+              <span
+                aria-hidden="true"
+                className={dashClass}
+                style={{ left: 3, top: 2, width: 1, height: 14 }}
+              />
+              <span
+                aria-hidden="true"
+                className={dotsClass}
+                style={{ backgroundImage: ROW_DOTS }}
+              />
             </button>
           }
         />
-        <DropdownMenuContent align="start" sideOffset={4}>
+        <DropdownMenuContent align="start" sideOffset={4} className="w-[220px]">
           {rowIndex === 0 && (
             <DropdownMenuItem onClick={() => run((c) => c.toggleHeaderRow())}>
               Header row
             </DropdownMenuItem>
           )}
+          {colourMenu("row")}
           <DropdownMenuItem onClick={() => run((c) => c.addRowBefore())}>
             Insert above
           </DropdownMenuItem>
@@ -428,7 +620,11 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
       {/* the column's grip, at the top edge of the column */}
       <DropdownMenu
         open={menuOpen === "col"}
-        onOpenChange={(open) => setMenuOpen(open ? "col" : null)}
+        onOpenChange={(open) => {
+          if (open && (justDraggedRef.current || dragRef.current?.started))
+            return
+          setMenuOpen(open ? "col" : null)
+        }}
       >
         <DropdownMenuTrigger
           render={
@@ -440,13 +636,23 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
                 left: cellRect.left + cellRect.width / 2 - 10,
                 top: tableRect.top - 5,
               }}
-              className={cn(gripClass, "h-2.5 w-5 cursor-grab active:cursor-grabbing")}
+              className={cn(gripClass, "h-[10px] w-5")}
             >
-              <DragIcon className="size-3 rotate-90" />
+              <span
+                aria-hidden="true"
+                className={dashClass}
+                style={{ left: 2, top: 3, width: 14, height: 1 }}
+              />
+              <span
+                aria-hidden="true"
+                className={dotsClass}
+                style={{ backgroundImage: COL_DOTS }}
+              />
             </button>
           }
         />
-        <DropdownMenuContent align="start" sideOffset={4}>
+        <DropdownMenuContent align="start" sideOffset={4} className="w-[220px]">
+          {colourMenu("col")}
           <DropdownMenuItem onClick={() => run((c) => c.addColumnBefore())}>
             Insert left
           </DropdownMenuItem>
@@ -493,7 +699,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
           top: tableRect.top,
           height: tableRect.height,
         }}
-        className="pointer-events-auto fixed z-56 flex w-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:opacity-100 [[data-slot=rich-text-editor-table-controls]:hover_&]:opacity-60"
+        className="pointer-events-auto fixed z-56 flex w-4 items-center justify-center text-card-foreground transition-colors hover:text-secondary-foreground"
       >
         <AddIcon className="size-3.5" />
       </button>
@@ -517,7 +723,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
           top: tableRect.bottom + 6,
           width: tableRect.width,
         }}
-        className="pointer-events-auto fixed z-56 flex h-4 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-secondary hover:opacity-100 [[data-slot=rich-text-editor-table-controls]:hover_&]:opacity-60"
+        className="pointer-events-auto fixed z-56 flex h-4 items-center justify-center text-card-foreground transition-colors hover:text-secondary-foreground"
       >
         <AddIcon className="size-3.5" />
       </button>

@@ -501,8 +501,17 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   const blankRef = React.useRef<HTMLImageElement | null>(null)
   const onDragStart = (event: React.DragEvent<HTMLButtonElement>) => {
     const el = targetRef.current
+    if (!el || !event.dataTransfer) {
+      event.preventDefault()
+      return
+    }
+    // dragging is marked before the selection is dispatched: the
+    // transaction would otherwise re-render the grip mid-dragstart — the
+    // drag's own source — and the browser ends a drag whose source moves
+    drag.current.dragging = true
     const sel = selectBlock()
-    if (!el || !sel || !event.dataTransfer) {
+    if (!sel) {
+      drag.current.dragging = false
       event.preventDefault()
       return
     }
@@ -522,7 +531,6 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     event.dataTransfer.setData("text/html", el.outerHTML)
     event.dataTransfer.setData("text/plain", el.textContent ?? "")
     event.dataTransfer.setDragImage(blankRef.current, 0, 0)
-    d.dragging = true
     event.currentTarget.classList.add("opacity-0")
     // the copy: the block as drawn, half seen, following the pointer
     const ghost = document.createElement("div")
