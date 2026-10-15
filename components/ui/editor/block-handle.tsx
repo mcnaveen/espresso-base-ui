@@ -570,6 +570,10 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   onDragOverRef.current = (event: DragEvent) => {
     const d = drag.current
     if (!d.dragging) return
+    // the drag is the grip's, wherever the pointer is: ProseMirror's own
+    // drop cursor (a 1px rule) would otherwise draw where the grip has no
+    // landing, and stay there, over the carried block
+    event.stopPropagation()
     if (d.ghost)
       d.ghost.style.transform = `translate(${event.clientX - d.grab.dx}px, ${
         event.clientY - d.grab.dy
