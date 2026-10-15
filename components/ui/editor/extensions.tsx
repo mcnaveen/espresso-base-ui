@@ -8,14 +8,33 @@
 import * as React from "react"
 import {
   Extension,
+  getMarkRange,
+  Mark,
   mergeAttributes,
   Node,
   type ChainedCommands,
   type Editor as TiptapEditor,
 } from "@tiptap/core"
+import type { Node as PMNode } from "@tiptap/pm/model"
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
-import { ReactRenderer } from "@tiptap/react"
+import { CellSelection } from "@tiptap/pm/tables"
+import {
+  Decoration,
+  DecorationSet,
+  type EditorView as PMEditorView,
+} from "@tiptap/pm/view"
+import { ReactRenderer, ReactNodeViewRenderer } from "@tiptap/react"
 import Suggestion, { type SuggestionProps } from "@tiptap/suggestion"
+
+import {
+  AttachmentView,
+  AudioView,
+  EmbedSlotView,
+  ImageSlotView,
+  openEmbedSourcePopup,
+  openImageSourcePopup,
+  openRemoveEmbedModal,
+} from "./media"
 
 import { cn } from "@/lib/utils"
 import {
@@ -39,8 +58,11 @@ import {
   NumberedListIcon,
   ParagraphIcon,
   QuoteIcon,
+  SmallDownIcon,
+  SmallRightIcon,
   TableViewIcon,
   TodoIcon,
+  LinkIcon,
 } from "@/components/ui/rich-text-editor-icons"
 
 export type View = TiptapEditor["view"]
@@ -84,7 +106,615 @@ export const hue = (name: string) => (name === "indigo" ? "violet" : name)
 export const textValue = (name: string) => `var(--color-${hue(name)}-600)`
 export const highlightValue = (name: string) => `var(--color-${hue(name)}-100)`
 
+/* ------------------------- table selection overlay --------------------------
+ * Draws ONE rounded box around a multi-cell selection instead of ringing
+ * each cell on its own: the editor takes `table-cell-range` (the per-cell
+ * ring steps aside) and a `.table-selection-box` spans the union of the
+ * selected cells, appended to the `.tableWrapper` so it tracks the card's
+ * horizontal scroll for free. A port of the branch's extension.
+ */
+/** fired on window when a table's moved line starts to settle */
+export const TABLE_SETTLE = "rte-table-settle"
 
+class SelectionOverlay {
+  private el: HTMLElement | null = null
+  private resizeObserver: ResizeObserver | null = null
+  private observed: HTMLElement | null = null
+  private onResize = () => this.update(this.view)
+
+  constructor(private view: PMEditorView) {
+    window.addEventListener("resize", this.onResize)
+    window.addEventListener(TABLE_SETTLE, this.onResize)
+    if (typeof ResizeObserver !== "undefined")
+      this.resizeObserver = new ResizeObserver(() => this.update(this.view))
+    this.update(view)
+  }
+
+  update(view: PMEditorView): void {
+    this.view = view
+    const { selection } = view.state
+    const isRange =
+      selection instanceof CellSelection ||
+      ("$anchorCell" in selection &&
+        (selection as CellSelection).$anchorCell.pos !==
+          (selection as CellSelection).$headCell.pos)
+    const range =
+      isRange &&
+      "$anchorCell" in selection &&
+      (selection as CellSelection).$anchorCell.pos !==
+        (selection as CellSelection).$headCell.pos
+    view.dom.classList.toggle("table-cell-range", !!range)
+    if (!range) {
+      this.remove()
+      return
+    }
+    this.draw(view, selection as CellSelection)
+  }
+
+  private draw(view: PMEditorView, selection: CellSelection): void {
+    let union: { left: number; top: number; right: number; bottom: number } | null =
+      null
+    selection.forEachCell((_cell, pos) => {
+      const dom = view.nodeDOM(pos)
+      if (!(dom instanceof HTMLElement)) return
+      const r = dom.getBoundingClientRect()
+      union = union
+        ? {
+            left: Math.min(union.left, r.left),
+            top: Math.min(union.top, r.top),
+            right: Math.max(union.right, r.right),
+            bottom: Math.max(union.bottom, r.bottom),
+          }
+        : { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    })
+    if (!union) {
+      this.remove()
+      return
+    }
+    const box: { left: number; top: number; right: number; bottom: number } =
+      union
+    const anchorDom = view.nodeDOM(selection.$anchorCell.pos)
+    const host =
+      (anchorDom instanceof HTMLElement
+        ? (anchorDom.closest(".tableWrapper") as HTMLElement | null)
+        : null) ?? (view.dom as HTMLElement)
+    const hostRect = host.getBoundingClientRect()
+    this.observe(host)
+    const el = this.ensure(host)
+    // the cells measure where they are drawn, mid-slide included: while a
+    // moved line settles the ring waits, out of sight, and is drawn once
+    // the cells have landed
+    if (this.sliding(host).length) {
+      el.style.visibility = "hidden"
+      this.settleWith(host)
+      return
+    }
+    el.style.left = `${box.left - hostRect.left - host.clientLeft + host.scrollLeft}px`
+    el.style.top = `${box.top - hostRect.top - host.clientTop + host.scrollTop}px`
+    el.style.width = `${box.right - box.left}px`
+    el.style.height = `${box.bottom - box.top}px`
+    this.fit(el, host, box)
+    if (el.style.visibility === "hidden") {
+      el.style.visibility = ""
+      el.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 120 })
+    }
+  }
+
+  /**
+   * The ring's corners and edges, from where the run stands in the table,
+   * fitted in the same draw as its place so they never fall out of step
+   * (a moved column ringed where it lands, with the corners of where it
+   * landed). On the card's edge the ring keeps to the cell's own edge and
+   * turns on the card's 11px inner radius; inside, it lies on the rule
+   * around the run. A run reaching the foot of a scrolling card closes
+   * above the card's bar.
+   */
+  private fit(
+    el: HTMLElement,
+    host: HTMLElement,
+    box: { left: number; top: number; right: number; bottom: number }
+  ): void {
+    const table = host.querySelector("table")
+    const t = table?.getBoundingClientRect()
+    if (!table || !t) return
+    const at = (a: number, b: number) => Math.abs(a - b) <= 1.5
+    const top = at(box.top, t.top)
+    const bottom = at(box.bottom, t.bottom)
+    const left = at(box.left, t.left)
+    const right = at(box.right, t.right)
+    el.style.marginLeft = left ? "0px" : "-1px"
+    el.style.paddingRight = left ? "0px" : "1px"
+    el.style.marginTop = top ? "0px" : "-1px"
+    el.style.paddingBottom = top ? "0px" : "1px"
+    const bar = bottom
+      ? Math.max(0, -parseFloat(getComputedStyle(table).marginBottom))
+      : 0
+    el.style.height = `${box.bottom - box.top - bar}px`
+    const radius = (corner: boolean) => (corner ? "11px" : "0px")
+    el.style.borderTopLeftRadius = radius(top && left)
+    el.style.borderTopRightRadius = radius(top && right)
+    el.style.borderBottomLeftRadius = radius(bottom && left)
+    el.style.borderBottomRightRadius = radius(bottom && right)
+  }
+
+  // A row/column move settles with a WAAPI slide: for its duration the
+  // cells measure at their OLD positions, and Safari fires a late update
+  // mid-slide that would freeze the box there (the double-ring-after-drop
+  // bug). When the table is animating, redraw once more after it lands.
+  /** the table's cells still sliding into place (the ring's own fade aside) */
+  private sliding(host: HTMLElement): Animation[] {
+    if (typeof host.getAnimations !== "function") return []
+    return host.getAnimations({ subtree: true }).filter((a) => {
+      const target = (a.effect as KeyframeEffect | null)?.target
+      return (
+        a.playState === "running" &&
+        a.effect?.getTiming().iterations !== Infinity &&
+        target !== this.el
+      )
+    })
+  }
+  private settling = false
+  private settleWith(host: HTMLElement): void {
+    if (this.settling) return
+    const anims = this.sliding(host)
+    if (!anims.length) return
+    this.settling = true
+    Promise.allSettled(anims.map((a) => a.finished)).then(() => {
+      this.settling = false
+      this.update(this.view)
+    })
+  }
+
+  private ensure(host: HTMLElement): HTMLElement {
+    if (this.el && this.el.parentElement === host) return this.el
+    this.remove()
+    const el = document.createElement("div")
+    el.className = "table-selection-box"
+    el.setAttribute("aria-hidden", "true")
+    host.appendChild(el)
+    this.el = el
+    return el
+  }
+
+  private observe(host: HTMLElement): void {
+    if (!this.resizeObserver || this.observed === host) return
+    this.resizeObserver.disconnect()
+    this.resizeObserver.observe(host)
+    this.observed = host
+  }
+
+  private remove(): void {
+    this.el?.remove()
+    this.el = null
+    this.resizeObserver?.disconnect()
+    this.observed = null
+  }
+
+  destroy(): void {
+    this.view.dom.classList.remove("table-cell-range")
+    this.remove()
+    window.removeEventListener("resize", this.onResize)
+    window.removeEventListener(TABLE_SETTLE, this.onResize)
+    this.resizeObserver = null
+  }
+}
+
+export const TableSelectionOverlay = Extension.create({
+  name: "tableSelectionOverlay",
+  addProseMirrorPlugins() {
+    return [new Plugin({ view: (view) => new SelectionOverlay(view) })]
+  },
+})
+
+/* ------------------------------ cell colours -------------------------------
+ * The cells' named fills, as the branch's TableCellColor: the attribute
+ * stores the hue and renders as `data-bg`, which the stylesheet tints for
+ * either theme; `setCellBackground` fans out over the selected cells
+ * through the table extension's own setCellAttribute.
+ */
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    tableCellColor: {
+      /** Fill the selected cell(s) with a named background; `null` clears it. */
+      setCellBackground: (name: string | null) => ReturnType
+    }
+  }
+}
+
+export const TableCellColor = Extension.create({
+  name: "tableCellColor",
+  addCommands() {
+    return {
+      setCellBackground:
+        (name) =>
+        ({ chain }) =>
+          chain()
+            .setCellAttribute("backgroundColor", name ? hue(name) : null)
+            .run(),
+    }
+  },
+})
+
+/* -------------------------------- link paste --------------------------------
+ * A URL pasted over a selected run of text links the run instead of
+ * replacing it, as the branch's link-paste-plugin does: single line only,
+ * validated as an absolute http(s) address — bare words and relative
+ * paths paste as the text they are.
+ */
+export const LinkPaste = Extension.create({
+  name: "rteLinkPaste",
+  addProseMirrorPlugins() {
+    const editor = this.editor
+    return [
+      new Plugin({
+        key: new PluginKey("handlePasteLink"),
+        props: {
+          handlePaste: (view, _event, slice): boolean => {
+            const { selection } = view.state
+            if (selection.empty) return false
+
+            // single node, single line only
+            if (slice.content.childCount > 1) return false
+            let textContent = ""
+            slice.content.forEach((node) => {
+              textContent += node.textContent
+            })
+            const text = textContent.trim()
+            if (!text || /[\r\n]/.test(text)) return false
+
+            let parsed: URL
+            try {
+              parsed = new URL(text)
+            } catch {
+              return false
+            }
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+              return false
+
+            return editor
+              .chain()
+              .setTextSelection({ from: selection.from, to: selection.to })
+              .setLink({ href: text })
+              .setTextSelection(selection.to)
+              .command(({ tr }) => {
+                tr.setStoredMarks([])
+                return true
+              })
+              .run()
+          },
+        },
+      }),
+    ]
+  },
+})
+
+/* --------------------------------- link-on ---------------------------------
+ * The link the caret is in is drawn as the file's Selected state: on a
+ * gray-100 ground, 22px tall on 4px corners (.rte-link-on).
+ */
+/**
+ * Whether a link card is up. The ground marks the link the card is about,
+ * and only while it is up: a caret merely resting in a link (a whole
+ * paragraph linked, say) would otherwise sit under a gray slab.
+ */
+export const LINK_ON_KEY = new PluginKey<boolean>("rteLinkOn")
+
+export const LinkOn = Extension.create({
+  name: "rteLinkOn",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<boolean>({
+        key: LINK_ON_KEY,
+        state: {
+          init: () => false,
+          apply: (tr, open) => {
+            const next = tr.getMeta(LINK_ON_KEY) as boolean | undefined
+            return next === undefined ? open : next
+          },
+        },
+        props: {
+          decorations(state) {
+            if (!LINK_ON_KEY.getState(state)) return null
+            const type = state.schema.marks.link
+            if (!type) return null
+            const { from, to, $from } = state.selection
+            const range = getMarkRange($from, type)
+            if (!range || from < range.from || to > range.to) return null
+            return DecorationSet.create(state.doc, [
+              Decoration.inline(range.from, range.to, {
+                class: "rte-link-on",
+              }),
+            ])
+          },
+        },
+      }),
+    ]
+  },
+})
+
+/* ---------------------------------- comment --------------------------------
+ * The amber run the toolbar's comment button lays on a selection; the
+ * thread itself lives beside the editor.
+ */
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    rteComment: {
+      setComment: (id: string) => ReturnType
+      unsetComment: () => ReturnType
+    }
+  }
+}
+
+export const CommentMark = Mark.create({
+  name: "comment",
+  inclusive: false,
+  addAttributes() {
+    return {
+      id: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("data-comment"),
+        renderHTML: (attrs) => ({ "data-comment": attrs.id }),
+      },
+    }
+  },
+  parseHTML: () => [{ tag: "span[data-comment]" }],
+  renderHTML: ({ HTMLAttributes }) => [
+    "span",
+    mergeAttributes(HTMLAttributes, { class: "rte-comment" }),
+    0,
+  ],
+  addCommands() {
+    return {
+      setComment:
+        (id) =>
+        ({ commands }) =>
+          commands.setMark(this.name, { id }),
+      unsetComment:
+        () =>
+        ({ commands }) =>
+          commands.unsetMark(this.name),
+    }
+  },
+})
+
+
+
+/* ------------------------------ expand / collapse --------------------------
+ * The official details nodes, drawn to the file's markup (.rte-details, a
+ * 16px chevron, the content folded under) and given the branch's commands:
+ * Enter on the summary as Notion's toggle takes it, the select's "Toggle
+ * list", and Alt+↑/↓ carrying the block.
+ */
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    rteDetails: {
+      insertDetails: () => ReturnType
+      /** the caret's block made a toggle's summary — or a summary unwrapped */
+      setToggleList: () => ReturnType
+      /** carry the block the cursor is in one place up or down */
+      moveDetails: (dir: -1 | 1) => ReturnType
+    }
+  }
+}
+
+const CHEVRON =
+  '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>'
+
+export const DetailsTweaks = Extension.create({
+  name: "rteDetails",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      "Alt-ArrowUp": () => this.editor.commands.moveDetails(-1),
+      "Alt-ArrowDown": () => this.editor.commands.moveDetails(1),
+      // Enter on the summary, as Notion's toggle takes it: on an open
+      // toggle the caret goes into its body, what followed it starting the
+      // body's first line; on a closed one a new closed toggle follows,
+      // titled with what followed the caret; on an empty toggle, the
+      // toggle turns back into a plain line
+      Enter: ({ editor }) => {
+        const { state } = editor
+        const { $from, $to } = state.selection
+        const summaryType = state.schema.nodes.detailsSummary
+        const detailsType = state.schema.nodes.details
+        const paragraph = state.schema.nodes.paragraph
+        if (!summaryType || !detailsType) return false
+        if ($from.parent.type !== summaryType || !$from.sameParent($to))
+          return false
+        const details = $from.node(-1)
+        const pos = $from.before(-1)
+        const body = details.child(1)
+        const tr = state.tr
+        if (
+          !$from.parent.content.size &&
+          body.childCount === 1 &&
+          body.firstChild!.isTextblock &&
+          !body.firstChild!.content.size
+        ) {
+          tr.replaceWith(pos, pos + details.nodeSize, paragraph.create())
+          tr.setSelection(TextSelection.create(tr.doc, pos + 1))
+          editor.view.dispatch(tr.scrollIntoView())
+          return true
+        }
+        const rest = $from.parent.content.cut($to.parentOffset)
+        tr.delete($from.pos, $from.end())
+        if (!details.attrs.open) {
+          const after = pos + tr.doc.nodeAt(pos)!.nodeSize
+          tr.insert(
+            after,
+            detailsType.create({ open: false }, [
+              summaryType.create(null, rest),
+              state.schema.nodes.detailsContent.create(
+                null,
+                paragraph.create()
+              ),
+            ])
+          )
+          tr.setSelection(TextSelection.create(tr.doc, after + 2))
+          editor.view.dispatch(tr.scrollIntoView())
+          return true
+        }
+        // the body's first line, after the summary as the delete left it
+        const mapped = tr.doc.nodeAt(pos)!
+        const bodyStart = pos + 1 + mapped.child(0).nodeSize + 1
+        const first = mapped.child(1).firstChild
+        if (!rest.size && first?.isTextblock && !first.content.size) {
+          tr.setSelection(TextSelection.create(tr.doc, bodyStart + 1))
+        } else {
+          tr.insert(bodyStart, paragraph.create(null, rest))
+          tr.setSelection(TextSelection.create(tr.doc, bodyStart + 1))
+        }
+        editor.view.dispatch(tr.scrollIntoView())
+        return true
+      },
+    }
+  },
+  addCommands() {
+    return {
+      moveDetails:
+        (dir) =>
+        ({ state, tr, dispatch }) => {
+          const { $from } = state.selection
+          let depth = $from.depth
+          while (depth > 0 && $from.node(depth).type.name !== "details")
+            depth--
+          if (depth === 0) return false
+          const node = $from.node(depth)
+          const pos = $from.before(depth)
+          const parent = $from.node(depth - 1)
+          const index = $from.index(depth - 1)
+          const other = dir < 0 ? index - 1 : index + 1
+          if (other < 0 || other >= parent.childCount) return false
+          const sibling = parent.child(other)
+          if (!dispatch) return true
+          const offset = $from.pos - pos
+          tr.delete(pos, pos + node.nodeSize)
+          const at = dir < 0 ? pos - sibling.nodeSize : pos + sibling.nodeSize
+          tr.insert(at, node)
+          tr.setSelection(TextSelection.near(tr.doc.resolve(at + offset)))
+          tr.scrollIntoView()
+          return true
+        },
+      insertDetails:
+        () =>
+        ({ commands }) =>
+          commands.insertContent({
+            type: "details",
+            attrs: { open: false },
+            content: [
+              { type: "detailsSummary" },
+              { type: "detailsContent", content: [{ type: "paragraph" }] },
+            ],
+          }),
+      // the select's "Toggle list", a block style like a heading is
+      setToggleList:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const { schema } = state
+          const { $from } = state.selection
+          const summaryType = schema.nodes.detailsSummary
+          const contentType = schema.nodes.detailsContent
+          const detailsType = schema.nodes.details
+          const paragraph = schema.nodes.paragraph
+          if (!summaryType || !detailsType) return false
+
+          // on a summary: unwrap the toggle
+          for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type !== summaryType) continue
+            const details = $from.node(d - 1)
+            const pos = $from.before(d - 1)
+            if (!dispatch) return true
+            const blocks = [
+              paragraph.create(null, details.child(0).content),
+              ...(details.child(1)?.content.content ?? []),
+            ]
+            tr.replaceWith(pos, pos + details.nodeSize, blocks)
+            tr.setSelection(
+              TextSelection.near(
+                tr.doc.resolve(pos + 1 + ($from.pos - $from.start(d)))
+              )
+            )
+            return true
+          }
+
+          // elsewhere: the caret's text block becomes a toggle's summary
+          const depth = $from.depth
+          const block = $from.node(depth)
+          if (!block.isTextblock) return false
+          if (!dispatch) return true
+          const pos = $from.before(depth)
+          const details = detailsType.create({ open: false }, [
+            summaryType.create(null, block.content),
+            contentType.create(null, paragraph.create()),
+          ])
+          tr.replaceWith(pos, pos + block.nodeSize, details)
+          tr.setSelection(
+            TextSelection.near(
+              tr.doc.resolve(pos + 2 + ($from.pos - $from.start(depth)))
+            )
+          )
+          return true
+        },
+    }
+  },
+})
+
+/** the node view the details node takes: the file's chevron and fold */
+export function detailsNodeView() {
+  return ({
+    node,
+    editor,
+    getPos,
+  }: {
+    node: PMNode
+    editor: TiptapEditor
+    getPos: () => number | undefined
+  }) => {
+    let current = node
+    const dom = document.createElement("div")
+    dom.className = "rte-details" + (current.attrs.open ? " is-open" : "")
+    dom.setAttribute("data-type", "details")
+    const button = document.createElement("button")
+    button.type = "button"
+    button.className = "rte-details-toggle"
+    button.contentEditable = "false"
+    button.setAttribute("aria-expanded", String(!!current.attrs.open))
+    button.setAttribute(
+      "aria-label",
+      current.attrs.open ? "Collapse" : "Expand"
+    )
+    button.innerHTML = CHEVRON
+    button.addEventListener("mousedown", (e) => e.preventDefault())
+    button.addEventListener("click", () => {
+      const pos = getPos()
+      if (typeof pos !== "number") return
+      editor.view.dispatch(
+        editor.view.state.tr.setNodeMarkup(pos, undefined, {
+          ...current.attrs,
+          open: !current.attrs.open,
+        })
+      )
+    })
+    const content = document.createElement("div")
+    content.className = "rte-details-body"
+    dom.append(button, content)
+    return {
+      dom,
+      contentDOM: content,
+      update(next: PMNode) {
+        if (next.type !== current.type) return false
+        current = next
+        dom.classList.toggle("is-open", !!next.attrs.open)
+        button.setAttribute("aria-expanded", String(!!next.attrs.open))
+        button.setAttribute(
+          "aria-label",
+          next.attrs.open ? "Collapse" : "Expand"
+        )
+        return true
+      },
+    }
+  }
+}
 
 /* ---------------------------- callout, audio, embed ------------------------ */
 
@@ -109,9 +739,26 @@ export const Callout = Node.create({
     mergeAttributes(HTMLAttributes, { "data-type": "callout" }),
     0,
   ],
+  addCommands() {
+    return {
+      setCallout:
+        (options: { emoji?: string } = {}) =>
+        ({ commands }) =>
+          commands.wrapIn(this.name, { emoji: options.emoji ?? "\u{1F4A1}" }),
+    }
+  },
 })
 
-// the audio bar, as a plain player for the carried file
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    rteCallout: {
+      setCallout: (options?: { emoji?: string }) => ReturnType
+    }
+  }
+}
+
+// the audio bar: the file's player — play, a slider, 0:15 / 32:48, volume
+// and the ⋯ — over a hidden <audio>; it serialises as <audio src title>
 export const Audio = Node.create({
   name: "audio",
   group: "block",
@@ -123,11 +770,26 @@ export const Audio = Node.create({
       title: { default: null },
     }
   },
-  parseHTML: () => [{ tag: "audio[src]" }],
-  renderHTML: ({ HTMLAttributes }) => [
-    "audio",
-    mergeAttributes(HTMLAttributes, { controls: "true" }),
+  parseHTML: () => [
+    {
+      tag: "audio[src]",
+      getAttrs: (el) => ({
+        src: (el as HTMLElement).getAttribute("src"),
+        title: (el as HTMLElement).getAttribute("title"),
+      }),
+    },
   ],
+  renderHTML: ({ HTMLAttributes }) => ["audio", HTMLAttributes],
+  addNodeView() {
+    return ReactNodeViewRenderer(AudioView, {
+      // anything inside a control is the player's alone: a press that went
+      // to ProseMirror would select the node and close a just-opened menu
+      stopEvent: ({ event }) =>
+        !!(event.target as HTMLElement).closest?.(
+          'button, [data-slot="slider"], [role="menu"]'
+        ),
+    })
+  },
 })
 
 // an embed: any page in a frame
@@ -156,7 +818,7 @@ export const Embed = Node.create({
   atom: true,
   draggable: true,
   addAttributes() {
-    return { src: { default: null } }
+    return { src: { default: null }, aspectRatio: { default: null } }
   },
   parseHTML: () => [{ tag: 'div[data-type="embed"]' }],
   renderHTML: ({ node, HTMLAttributes }) => [
@@ -168,9 +830,232 @@ export const Embed = Node.create({
         src: node.attrs.src,
         allowfullscreen: "true",
         loading: "lazy",
+        ...(node.attrs.aspectRatio
+          ? { style: `aspect-ratio: ${node.attrs.aspectRatio}` }
+          : {}),
       },
     ],
   ],
+})
+
+/* ------------------------------ the slots ----------------------------------
+ * The empty rows /image and /embed lay down (32243:108985, 32354:128378):
+ * each stands in the document until it is filled, and filling it is the
+ * one gesture its card asks for — a file off the disk or a link. A row of
+ * image slots inside a media columns row is the file's columns-wise
+ * upload. The views live in ./media.
+ */
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    rteEmbedSlot: {
+      /** lay an empty embed slot down, to be filled by link */
+      insertEmbedSlot: () => ReturnType
+      /** raise the embed card beside the embed at `pos` */
+      replaceEmbed: (pos: number) => ReturnType
+      /** ask before the embed at `pos` goes */
+      removeEmbed: (pos: number) => ReturnType
+    }
+    rteImageSlot: {
+      /** lay an empty image slot down, to be filled by file or by link */
+      insertImageSlot: () => ReturnType
+      /** a row of empty slots, one per column — one column is a bare slot */
+      insertImageColumns: (count?: number) => ReturnType
+      /** raise the image card beside the picture at `pos` */
+      replaceImage: (pos: number) => ReturnType
+    }
+  }
+}
+
+/**
+ * An embed slot laid down by the toolbar or /embed raises its card at
+ * once, as Notion's does; one already in the document waits for a press.
+ */
+export const freshEmbedSlot = { pending: false }
+
+export const EmbedSlot = Node.create({
+  name: "embedSlot",
+  group: "block",
+  atom: true,
+  draggable: true,
+  selectable: true,
+  parseHTML: () => [{ tag: 'div[data-type="embed-slot"]' }],
+  renderHTML: ({ HTMLAttributes }) => [
+    "div",
+    mergeAttributes(HTMLAttributes, { "data-type": "embed-slot" }),
+  ],
+  addNodeView() {
+    return ReactNodeViewRenderer(EmbedSlotView)
+  },
+  addCommands() {
+    return {
+      insertEmbedSlot:
+        () =>
+        ({ commands }) => {
+          freshEmbedSlot.pending = true
+          const done = commands.insertContent({ type: this.name })
+          // the slot mounts on the next tick; should none take it, it lapses
+          setTimeout(() => (freshEmbedSlot.pending = false), 300)
+          return done
+        },
+      replaceEmbed:
+        (pos: number) =>
+        ({ editor }) => {
+          const node = editor.state.doc.nodeAt(pos)
+          if (!node || node.type.name !== "embed") return false
+          openEmbedSourcePopup(
+            editor,
+            pos,
+            (at: number, embed: { src: string; aspectRatio: number }) => {
+              const live = editor.state.doc.nodeAt(at)
+              if (!live || live.type.name !== "embed") return
+              editor.view.dispatch(
+                editor.state.tr.setNodeMarkup(at, undefined, {
+                  ...live.attrs,
+                  ...embed,
+                })
+              )
+            }
+          )
+          return true
+        },
+      removeEmbed:
+        (pos: number) =>
+        ({ editor }) => {
+          const node = editor.state.doc.nodeAt(pos)
+          if (!node || node.type.name !== "embed") return false
+          openRemoveEmbedModal(editor, pos)
+          return true
+        },
+    }
+  },
+})
+
+export const ImageSlot = Node.create({
+  name: "imageSlot",
+  group: "block",
+  atom: true,
+  draggable: true,
+  selectable: true,
+  parseHTML: () => [{ tag: 'div[data-type="image-slot"]' }],
+  renderHTML: ({ HTMLAttributes }) => [
+    "div",
+    mergeAttributes(HTMLAttributes, { "data-type": "image-slot" }),
+  ],
+  addNodeView() {
+    return ReactNodeViewRenderer(ImageSlotView)
+  },
+  addCommands() {
+    return {
+      insertImageSlot:
+        () =>
+        ({ commands }) =>
+          commands.insertContent({ type: this.name }),
+      // one slot per column; a single column is no grid at all
+      insertImageColumns:
+        (count = 2) =>
+        ({ commands }) =>
+          count < 2
+            ? commands.insertContent({ type: this.name })
+            : commands.insertContent({
+                type: "columns",
+                attrs: { count, media: true },
+                content: Array.from({ length: count }, () => ({
+                  type: "column",
+                  content: [{ type: this.name }],
+                })),
+              }),
+      replaceImage:
+        (pos: number) =>
+        ({ editor }) => {
+          const node = editor.state.doc.nodeAt(pos)
+          if (!node || node.type.name !== "image") return false
+          openImageSourcePopup(
+            editor,
+            pos,
+            (at: number, image: { src: string }) => {
+              const live = editor.state.doc.nodeAt(at)
+              if (!live || live.type.name !== "image") return
+              editor.view.dispatch(
+                editor.state.tr.setNodeMarkup(at, undefined, {
+                  ...live.attrs,
+                  ...image,
+                })
+              )
+            }
+          )
+          return true
+        },
+    }
+  },
+  // A row of pictures keeps every cell either filled or offering: a cell
+  // whose picture goes gets its slot back, and a cell a picture lands in
+  // gives its slot up.
+  addProseMirrorPlugins() {
+    const slot = this.type
+    const blankParagraph = (n: PMNode) =>
+      n.type.name === "paragraph" && n.content.size === 0
+    return [
+      new Plugin({
+        key: new PluginKey("rteImageSlots"),
+        appendTransaction: (transactions, _old, state) => {
+          if (!transactions.some((tr) => tr.docChanged)) return null
+          const edits: { from: number; to: number; slot?: boolean }[] = []
+          state.doc.descendants((row, rowPos) => {
+            if (row.type.name !== "columns") return true
+            if (!row.attrs.media) return false
+            row.forEach((column, offset) => {
+              const start = rowPos + 1 + offset + 1
+              let picture = false
+              column.descendants((n) => {
+                if (n.type.name === "image") picture = true
+                return !picture
+              })
+              let slots = 0
+              column.forEach((child) => {
+                if (child.type === slot) slots++
+              })
+              if (picture) {
+                column.forEach((child, at) => {
+                  if (child.type === slot)
+                    edits.push({
+                      from: start + at,
+                      to: start + at + child.nodeSize,
+                    })
+                })
+              } else if (slots) {
+                column.forEach((child, at) => {
+                  if (blankParagraph(child))
+                    edits.push({
+                      from: start + at,
+                      to: start + at + child.nodeSize,
+                    })
+                })
+              } else {
+                let blank = true
+                column.forEach((child) => {
+                  if (!blankParagraph(child)) blank = false
+                })
+                if (blank)
+                  edits.push({
+                    from: start,
+                    to: start + column.content.size,
+                    slot: true,
+                  })
+              }
+            })
+            return false
+          })
+          if (!edits.length) return null
+          const tr = state.tr
+          for (const e of edits.sort((a, b) => b.from - a.from)) {
+            if (e.slot) tr.replaceWith(e.from, e.to, slot.create())
+            else tr.delete(e.from, e.to)
+          }
+          return tr
+        },
+      }),
+    ]
+  },
 })
 
 /* ------------------------- mentions and slash commands ---------------------
@@ -193,6 +1078,8 @@ export const PEOPLE = [
 export type SuggestItem = {
   id: string
   label: string
+  /** the section of the menu the item belongs under */
+  group?: string
   image?: string
   icon?: React.ReactNode
   run?: (editor: TiptapEditor) => void
@@ -233,35 +1120,54 @@ export const SuggestionList = React.forwardRef<
     [items, index, command]
   )
   if (!items.length) return null
+  // the items under their sections, in the order they arrive
+  const groups: { name: string | undefined; items: SuggestItem[] }[] = []
+  for (const item of items) {
+    const last = groups[groups.length - 1]
+    if (last && last.name === item.group) last.items.push(item)
+    else groups.push({ name: item.group, items: [item] })
+  }
   return (
     <div
       data-slot="rich-text-editor-suggestions"
-      className="flex max-h-72 w-56 flex-col gap-0.5 overflow-y-auto rounded-xl border border-border-soft bg-card p-1 shadow-elevation-lg"
+      className="flex max-h-72 w-56 flex-col overflow-y-auto rounded-xl border border-border-soft bg-card p-1 shadow-elevation-lg"
     >
-      {items.map((item, i) => (
-        <button
-          key={item.id}
-          type="button"
-          onMouseEnter={() => setIndex(i)}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => command(item)}
-          className={cn(
-            "flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-base text-secondary-foreground",
-            i === index && "bg-secondary"
-          )}
-        >
-          {item.image ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={item.image}
-              alt=""
-              className="size-5 shrink-0 rounded-full object-cover"
-            />
-          ) : (
-            item.icon
-          )}
-          <span className="truncate">{item.label}</span>
-        </button>
+      {groups.map((group, g) => (
+        <React.Fragment key={group.name ?? g}>
+          {group.name ? (
+            <div className="px-2 pt-1.5 pb-0.5 text-sm leading-[15px] text-card-foreground select-none">
+              {group.name}
+            </div>
+          ) : null}
+          {group.items.map((item) => {
+            const i = items.indexOf(item)
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onMouseEnter={() => setIndex(i)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => command(item)}
+                className={cn(
+                  "flex h-7 shrink-0 items-center gap-2 rounded-lg px-2 text-left text-base text-secondary-foreground",
+                  i === index && "bg-secondary"
+                )}
+              >
+                {item.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.image}
+                    alt=""
+                    className="size-5 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  item.icon
+                )}
+                <span className="truncate">{item.label}</span>
+              </button>
+            )
+          })}
+        </React.Fragment>
       ))}
     </div>
   )
@@ -318,23 +1224,38 @@ const pick = (slot: string) => () =>
   )?.click()
 
 export const SLASH_ITEMS: SuggestItem[] = [
-  { id: "image", label: "Image", icon: <ImageIcon className="size-4" />, run: () => pick("rte-image-input")() },
-  { id: "video", label: "Video", icon: <VideoIcon className="size-4" />, run: () => pick("rte-video-input")() },
-  { id: "audio", label: "Audio", icon: <AudioWavesIcon className="size-4" />, run: () => pick("rte-audio-input")() },
-  { id: "file", label: "File", icon: <FileUploadIcon className="size-4" />, run: () => pick("rte-attach-input")() },
-  { id: "embed", label: "Embed", icon: <GroupIcon className="size-4" />, run: (ed) => {
-    const src = window.prompt("Embed URL")
-    if (src) ed.chain().focus().insertContent({ type: "embed", attrs: { src } }).run()
-  } },
-  { id: "table", label: "Table", icon: <TableViewIcon className="size-4" />, run: (ed) => ed.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
-  { id: "quote", label: "Quote", icon: <QuoteIcon className="size-4" />, run: (ed) => ed.chain().focus().toggleBlockquote().run() },
-  { id: "code", label: "Code block", icon: <CodeIcon className="size-4" />, run: (ed) => ed.chain().focus().toggleCodeBlock().run() },
-  { id: "divider", label: "Divider", icon: <DividerIcon className="size-4" />, run: (ed) => ed.chain().focus().setHorizontalRule().run() },
-  { id: "todo", label: "To-do list", icon: <TodoIcon className="size-4" />, run: (ed) => ed.chain().focus().toggleTaskList().run() },
-  { id: "callout", label: "Callout", icon: <QuoteIcon className="size-4" />, run: (ed) => ed.chain().focus().insertContent({ type: "callout", content: [{ type: "paragraph" }] }).run() },
-  { id: "details", label: "Expand / collapse", icon: <Grid2Icon className="size-4" />, run: (ed) => ed.chain().focus().setDetails().run() },
-  { id: "columns2", label: "2 columns", icon: <Grid2Icon className="size-4" />, run: (ed) => ed.chain().focus().insertColumns(2).run() },
-  { id: "columns3", label: "3 columns", icon: <Grid3Icon className="size-4" />, run: (ed) => ed.chain().focus().insertColumns(3).run() },
+  // ---- the Text select's blocks, in the select's own order
+  { id: "paragraph", label: "Text", group: "Text", icon: <ParagraphIcon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "paragraph") },
+  { id: "h1", label: "Heading 1", group: "Text", icon: <Heading1Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "h1") },
+  { id: "h2", label: "Heading 2", group: "Text", icon: <Heading2Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "h2") },
+  { id: "h3", label: "Heading 3", group: "Text", icon: <Heading3Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "h3") },
+  { id: "h4", label: "Heading 4", group: "Text", icon: <Heading4Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "h4") },
+  { id: "h5", label: "Heading 5", group: "Text", icon: <Heading5Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "h5") },
+  { id: "h6", label: "Heading 6", group: "Text", icon: <Heading6Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "h6") },
+  { id: "code", label: "Code", group: "Text", icon: <CodeIcon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "codeBlock") },
+  { id: "quote", label: "Quote", group: "Text", icon: <QuoteIcon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "blockquote") },
+  { id: "bullet", label: "Bulleted list", group: "Lists", icon: <MultipleListIcon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "bulletList") },
+  { id: "numbered", label: "Numbered list", group: "Lists", icon: <NumberedListIcon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "orderedList") },
+  { id: "todo", label: "To-do list", group: "Lists", icon: <TodoIcon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "taskList") },
+  { id: "toggle", label: "Toggle list", group: "Lists", icon: <SmallRightIcon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "details") },
+  { id: "columns2", label: "2 columns", group: "Layout", icon: <Grid2Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns2") },
+  { id: "columns3", label: "3 columns", group: "Layout", icon: <Grid3Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns3") },
+  { id: "columns4", label: "4 columns", group: "Layout", icon: <Grid4Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns4") },
+  // ---- the media, as the toolbar's Insert menu lays them: a picture's
+  // slot, the rows of pictures, audio from the disk, the embed's slot
+  { id: "image", label: "Image", group: "Media", icon: <ImageIcon className="size-4" />, run: (ed) => ed.chain().focus().insertImageSlot().run() },
+  { id: "image1", label: "1 image column", group: "Media", icon: <ImageIcon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(1).run() },
+  { id: "image2", label: "2 image columns", group: "Media", icon: <Grid2Icon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(2).run() },
+  { id: "image3", label: "3 image columns", group: "Media", icon: <Grid3Icon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(3).run() },
+  { id: "video", label: "Video", group: "Media", icon: <VideoIcon className="size-4" />, run: () => pick("rte-video-input")() },
+  { id: "audio", label: "Audio", group: "Media", icon: <AudioWavesIcon className="size-4" />, run: () => pick("rte-audio-input")() },
+  { id: "file", label: "File", group: "Media", icon: <FileUploadIcon className="size-4" />, run: () => pick("rte-attach-input")() },
+  { id: "embed", label: "Embed", group: "Media", icon: <GroupIcon className="size-4" />, run: (ed) => ed.chain().focus().insertEmbedSlot().run() },
+  // ---- the Insert group: link, table, divider, and the callout
+  { id: "link", label: "Link", group: "Insert", icon: <LinkIcon className="size-4" />, run: (ed) => ed.commands.openLinkEditor?.() },
+  { id: "table", label: "Table", group: "Insert", icon: <TableViewIcon className="size-4" />, run: (ed) => ed.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
+  { id: "divider", label: "Divider", group: "Insert", icon: <DividerIcon className="size-4" />, run: (ed) => ed.chain().focus().setHorizontalRule().run() },
+  { id: "callout", label: "Callout", group: "Insert", icon: <QuoteIcon className="size-4" />, run: (ed) => ed.chain().focus().setCallout().run() },
 ]
 
 export const SlashCommands = Extension.create({
@@ -344,6 +1265,8 @@ export const SlashCommands = Extension.create({
       Suggestion<SuggestItem>({
         editor: this.editor,
         char: "/",
+        // as Notion's: a name of more than one word is found typed in full
+        allowSpaces: true,
         pluginKey: new PluginKey("slashCommands"),
         items: ({ query }) =>
           SLASH_ITEMS.filter((item) =>
@@ -370,6 +1293,8 @@ declare module "@tiptap/core" {
     columns: {
       insertColumns: (count?: number) => ReturnType
       setColumns: (count?: number) => ReturnType
+      /** the share of the row each column of the row at `pos` has */
+      setColumnWidths: (pos: number, widths: number[] | null) => ReturnType
     }
   }
 }
@@ -398,6 +1323,39 @@ export const Columns = Node.create({
         parseHTML: (el) => Number(el.getAttribute("data-count") ?? 2),
         renderHTML: (attrs) => ({ "data-count": attrs.count }),
       },
+      // the share of the row each column has, as the bar between two of
+      // them sets it (ColumnResizer); none means equal shares. Drawn as
+      // the grid's own template, so the row needs no script to keep it.
+      widths: {
+        default: null,
+        parseHTML: (el) => {
+          const raw = el.getAttribute("data-widths")
+          if (!raw) return null
+          const widths = raw.split(",").map(Number)
+          const count = Number(el.getAttribute("data-count") ?? widths.length)
+          return widths.length === count &&
+            widths.every((w) => Number.isFinite(w) && w > 0)
+            ? widths
+            : null
+        },
+        renderHTML: (attrs) => {
+          const widths = attrs.widths as number[] | null
+          if (!widths) return {}
+          return {
+            "data-widths": widths.map((w) => w.toFixed(4)).join(","),
+            style: `grid-template-columns: ${widths
+              .map((w) => `minmax(0, ${w.toFixed(4)}fr)`)
+              .join(" ")}`,
+          }
+        },
+      },
+      // a row of pictures is ruled differently from a row of prose: the
+      // file sets its cells 16 apart with nothing drawn between them
+      media: {
+        default: false,
+        parseHTML: (el) => el.getAttribute("data-media") === "true",
+        renderHTML: (attrs) => (attrs.media ? { "data-media": "true" } : {}),
+      },
     }
   },
   parseHTML: () => [{ tag: 'div[data-type="columns"]' }],
@@ -410,15 +1368,40 @@ export const Columns = Node.create({
     return {
       insertColumns:
         (count = 2) =>
-        ({ commands }) =>
-          commands.insertContent({
+        ({ commands, tr }) => {
+          const done = commands.insertContent({
             type: this.name,
             attrs: { count },
             content: Array.from({ length: count }, () => ({
               type: "column",
               content: [{ type: "paragraph" }],
             })),
-          }),
+          })
+          if (!done) return false
+          // the insert leaves the caret in the last column; writing starts
+          // in the first
+          const { $from } = tr.selection
+          for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type.name !== this.name) continue
+            tr.setSelection(TextSelection.create(tr.doc, $from.before(d) + 3))
+            break
+          }
+          return true
+        },
+      setColumnWidths:
+        (pos: number, widths: number[] | null) =>
+        ({ state, tr, dispatch }) => {
+          const row = state.doc.nodeAt(pos)
+          if (
+            !row ||
+            row.type !== this.type ||
+            (widths !== null && widths.length !== row.childCount)
+          )
+            return false
+          if (dispatch)
+            tr.setNodeMarkup(pos, undefined, { ...row.attrs, widths })
+          return true
+        },
       setColumns:
         (count = 2) =>
         ({ state, tr, dispatch, commands }) => {
@@ -452,7 +1435,11 @@ export const Columns = Node.create({
           }
 
           const from = $from.before(depth)
-          const next = row.type.create({ ...row.attrs, count }, columns)
+          // a re-counted row starts from equal shares again
+          const next = row.type.create(
+            { ...row.attrs, count, widths: null },
+            columns
+          )
           tr.replaceWith(from, from + row.nodeSize, next)
 
           // the caret stays on its text: untouched in a kept column, and
@@ -518,6 +1505,21 @@ export const Attachment = Node.create({
       String(node.attrs.fileName ?? ""),
     ]
   },
+  addNodeView() {
+    return ReactNodeViewRenderer(AttachmentView, {
+      // the row is an <a>: its presses stay its own, and its native drag
+      // is no drag of the block — the browser would carry the URL
+      stopEvent: ({ event }) => {
+        const target = event.target as HTMLElement
+        const { type } = event
+        if (type.startsWith("drag") || type === "drop") {
+          if (type === "dragstart") event.preventDefault()
+          return false
+        }
+        return !!target.closest?.("a, button")
+      },
+    })
+  },
 })
 
 /* ---------------------------------- blocks ---------------------------------
@@ -536,6 +1538,7 @@ export const BLOCKS = [
   { value: "bulletList", label: "Bulleted list", Icon: MultipleListIcon },
   { value: "orderedList", label: "Numbered list", Icon: NumberedListIcon },
   { value: "taskList", label: "To-do list", Icon: TodoIcon },
+  { value: "details", label: "Toggle list", Icon: SmallRightIcon },
   { value: "codeBlock", label: "Code", Icon: CodeIcon },
   { value: "blockquote", label: "Quote", Icon: QuoteIcon },
   { value: "columns2", label: "2 columns", Icon: Grid2Icon },
@@ -560,6 +1563,8 @@ export function activeBlockOf(ed: TiptapEditor): BlockValue {
   if (ed.isActive("bulletList")) return "bulletList"
   if (ed.isActive("orderedList")) return "orderedList"
   if (ed.isActive("blockquote")) return "blockquote"
+  // a toggle is its summary line; what it holds below are blocks of their own
+  if (ed.isActive("detailsSummary")) return "details"
   const columns = columnsAround(ed)
   if (columns) return `columns${columns}` as BlockValue
   return "paragraph"
@@ -576,6 +1581,7 @@ export function applyBlock(chain: ChainedCommands, value: BlockValue) {
   else if (value === "taskList") chain.toggleTaskList().run()
   else if (value === "codeBlock") chain.toggleCodeBlock().run()
   else if (value === "blockquote") chain.toggleBlockquote().run()
+  else if (value === "details") chain.setToggleList().run()
   // a row the selection is already in is re-counted; elsewhere a row is laid
   else if (value === "columns2") chain.setColumns(2).run()
   else if (value === "columns3") chain.setColumns(3).run()
@@ -589,5 +1595,6 @@ export const FONTS = [
   { label: "Serif", value: 'Georgia, "Times New Roman", serif' },
   { label: "Mono", value: 'ui-monospace, "SF Mono", Menlo, monospace' },
 ] as const
-export const DEFAULT_SIZE = 14
+/** the document's body size, before the view can be measured */
+export const DEFAULT_SIZE = 15
 export const SPACINGS = ["1", "1.15", "1.5", "2"] as const

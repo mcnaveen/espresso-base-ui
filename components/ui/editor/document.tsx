@@ -2,23 +2,41 @@
 
 // The document editor, after the branch's RichTextEditor.vue: the full
 // fixed bar over a 700px document column, the block grips, the table
-// controls and the floating selection bar — all composed over the editor
-// molecule's provider and RichTextKit.
+// controls, the column bar and the floating selection bar — all composed
+// over the editor molecule's provider and RichTextKit.
+//
+// Figma: espresso-2.0 › WYSIWYG editor › toolbar (30534:59617). A 36px
+// bar, 4px in, ruled beneath, its controls 28px on an 8px radius:
+//   + ⌄ insert · Text ⌃ block style · Inter ⌄ font · − 14 + size ·
+//   B I U S · A ⌃ colour │ code quote rule │ list ⌄ align ⌄ spacing ⌄
+//   to-do indent │ link table ⌄ emoji ⌄ │ image ⌄ video ⌄ audio ⌄ file ⌄ │
+//   highlight comment │ ⋯
 import * as React from "react"
-import type { ChainedCommands, Editor as TiptapEditor } from "@tiptap/core"
+import type { Editor as TiptapEditor } from "@tiptap/core"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 import { useEditorState } from "@tiptap/react"
 import { BubbleMenu } from "@tiptap/react/menus"
-import { createPortal } from "react-dom"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -40,6 +58,9 @@ import {
 import {
   AddEmoji1Icon,
   AddIcon,
+  ArrowUpIcon,
+  CheckCircleIcon,
+  CloseIcon,
   AlignCenterIcon,
   AlignJustifyIcon,
   AlignLeftIcon,
@@ -47,12 +68,14 @@ import {
   AudioWavesIcon,
   ClearFormattingIcon,
   CodeIcon,
+  Comment1Icon,
   DividerIcon,
   DotHorizontalIcon,
   FileUploadIcon,
+  Grid3Icon,
   GroupIcon,
-  ImageIcon,
   HighlightIcon,
+  ImageIcon,
   LinkIcon,
   MarkBoldIcon,
   MarkItalicIcon,
@@ -62,6 +85,7 @@ import {
   NumberedListIcon,
   QuoteIcon,
   SmallDownIcon,
+  SmallRightIcon,
   SubscriptIcon,
   SuperscriptIcon,
   TableViewIcon,
@@ -73,6 +97,9 @@ import {
 import { EditorContent, EditorProvider } from "./core"
 import { RichTextKit } from "./kit"
 import { BlockHandle } from "./block-handle"
+import { ColumnResizer } from "./column-resizer"
+import { LinkClickCard } from "./link-card"
+import { EditorStyles } from "./styles"
 import { TableControls } from "./table-controls"
 import {
   activeBlockOf,
@@ -83,54 +110,68 @@ import {
   highlightValue,
   hue,
   PALETTE,
-  SPACINGS,
   textValue,
 } from "./extensions"
 
-/* --------------------------------- controls -------------------------------- */
-
-const controlClass =
-  "flex h-7 min-w-7 shrink-0 items-center justify-center gap-0.5 rounded-md px-1 text-secondary-foreground transition-colors not-disabled:hover:bg-secondary aria-pressed:bg-secondary disabled:cursor-default disabled:opacity-50 data-popup-open:bg-secondary [&>svg]:size-4"
-
-function Control({
-  label,
-  pressed,
-  disabled,
-  onClick,
-  className,
-  children,
-}: {
-  label: string
-  pressed?: boolean
-  disabled?: boolean
-  onClick?: () => void
-  className?: string
-  children: React.ReactNode
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            aria-label={label}
-            aria-pressed={pressed}
-            disabled={disabled}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={onClick}
-            className={cn(controlClass, className)}
-          >
-            {children}
-          </button>
-        }
-      />
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  )
+/* ------------------------------- colour panel ------------------------------
+ * Figma: espresso-2.0 › popover (31845:36005). The colour picker's card:
+ * 8px in, two sections 16 apart, each a 13px gray-500 label, 8, then the
+ * swatches — 24px, 6 apart, on an 8px radius, ruled in the colour's tint.
+ * A text swatch is white with the A in the colour; a background swatch is
+ * the colour's wash. Default unsets.
+ */
+/**
+ * The size the caret's block is drawn at with no size of its own: the
+ * document's 15px body, a heading's own size. The stepper counts from it,
+ * so its first step is a step the eye can see.
+ */
+function baseSizeAt(ed: TiptapEditor): number {
+  try {
+    const { $from } = ed.state.selection
+    if ($from.depth > 0) {
+      const dom = ed.view.nodeDOM($from.before($from.depth))
+      if (dom instanceof HTMLElement) {
+        const n = parseFloat(getComputedStyle(dom).fontSize)
+        if (Number.isFinite(n) && n > 0) return Math.round(n)
+      }
+    }
+  } catch {
+    // the view is not drawn yet
+  }
+  return DEFAULT_SIZE
 }
 
-function BarDivider() {
-  return <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-muted" />
+/**
+ * The floating bar's anchor: the whole run of selected text, every line of
+ * it, so the bar stands centred over the text. Tiptap's own anchor spans
+ * the selection's two ends, which on a paragraph with a short last line
+ * pulls the bar off to the left and moves it whenever the lines re-wrap
+ * (a size stepped, a font changed).
+ */
+function selectionBox(ed: TiptapEditor) {
+  // measured afresh each time the bar asks, so it follows scrolling and
+  // re-wrapping lines
+  const measure = (): DOMRect | null => {
+    try {
+      const { from, to } = ed.state.selection
+      const start = ed.view.domAtPos(from)
+      const end = ed.view.domAtPos(to)
+      const range = document.createRange()
+      range.setStart(start.node, start.offset)
+      range.setEnd(end.node, end.offset)
+      const rect = range.getBoundingClientRect()
+      return rect.width || rect.height ? rect : null
+    } catch {
+      return null
+    }
+  }
+  const first = measure()
+  if (!first) return null
+  let last = first
+  return {
+    getBoundingClientRect: () => (last = measure() ?? last),
+    getClientRects: () => [measure() ?? last],
+  }
 }
 
 function ColorPanel({
@@ -140,12 +181,37 @@ function ColorPanel({
   editor: TiptapEditor
   onPick: () => void
 }) {
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: ed }) => ({
+      text: (ed.getAttributes("textStyle").color as string) ?? null,
+      highlight: (ed.getAttributes("highlight").color as string) ?? null,
+    }),
+  })
   const swatches = [null, ...PALETTE]
-  const swatchClass =
-    "flex size-6 items-center justify-center rounded-md border bg-card text-base leading-none transition-shadow hover:shadow-[0_0_0_1px_var(--sw-line)] focus-visible:shadow-[0_0_0_1px_var(--sw-line)] focus-visible:outline-none"
+  const style = (name: string | null) =>
+    name
+      ? ({
+          "--sw-ink": `var(--color-${hue(name)}-600)`,
+          "--sw-line": `var(--color-${hue(name)}-200)`,
+          "--sw-fill": `var(--color-${hue(name)}-50)`,
+          "--sw-ink-dark": `var(--color-${hue(name)}-400)`,
+          "--sw-line-dark": `var(--color-${hue(name)}-700)`,
+          "--sw-fill-dark": `var(--color-${hue(name)}-900)`,
+        } as React.CSSProperties)
+      : undefined
+  const label = (name: string | null) =>
+    name ? name.charAt(0).toUpperCase() + name.slice(1) : "Default"
+  // a colour set leaves the caret at the run's end, not the run selected:
+  // the selection's wash would otherwise stand over the colour just chosen
+  const settle = () => {
+    const { to, empty } = editor.state.selection
+    if (!empty) editor.chain().focus().setTextSelection(to).run()
+  }
   const pickText = (name: string | null) => {
     const chain = editor.chain().focus()
     ;(name ? chain.setColor(textValue(name)) : chain.unsetColor()).run()
+    settle()
     onPick()
   }
   const pickHighlight = (name: string | null) => {
@@ -154,63 +220,66 @@ function ColorPanel({
       ? chain.setHighlight({ color: highlightValue(name) })
       : chain.unsetHighlight()
     ).run()
+    settle()
     onPick()
   }
   return (
     <div
+      className="rte-colors flex w-[190px] flex-col gap-4 rounded-xl border border-border-soft bg-card p-2 shadow-elevation-lg"
       role="group"
       aria-label="Text and background colour"
-      className="flex w-[190px] flex-col gap-4"
     >
-      {(
-        [
-          ["Text color", pickText, false],
-          ["Background color", pickHighlight, true],
-        ] as const
-      ).map(([title, pick, fill]) => (
-        <section key={title} className="flex flex-col gap-2">
-          <div className="text-sm leading-[15px] text-muted-foreground">
-            {title}
-          </div>
-          <div className="grid grid-cols-6 gap-1.5">
-            {swatches.map((name) => (
-              <button
-                key={name ?? "default"}
-                type="button"
-                title={name ?? "Default"}
-                aria-label={name ?? "Default"}
-                onClick={() => pick(name)}
-                className={swatchClass}
-                style={
-                  name
-                    ? ({
-                        color: textValue(name),
-                        backgroundColor: fill
-                          ? `var(--color-${hue(name)}-50)`
-                          : undefined,
-                        borderColor: `var(--color-${hue(name)}-200)`,
-                        "--sw-line": `var(--color-${hue(name)}-200)`,
-                      } as React.CSSProperties)
-                    : ({
-                        color: "var(--foreground)",
-                        borderColor: "var(--border)",
-                        "--sw-line": "var(--border)",
-                      } as React.CSSProperties)
-                }
-              >
-                {fill ? "" : "A"}
-              </button>
-            ))}
-          </div>
-        </section>
-      ))}
+      <section className="flex flex-col gap-2">
+        <div className="text-sm leading-[15px] text-accent-foreground">
+          Text color
+        </div>
+        <div className="grid grid-cols-6 gap-1.5">
+          {swatches.map((name) => (
+            <button
+              key={name ?? "default"}
+              type="button"
+              className="rte-swatch"
+              style={style(name)}
+              aria-label={label(name)}
+              title={label(name)}
+              aria-pressed={
+                name ? active?.text === textValue(name) : !active?.text
+              }
+              onClick={() => pickText(name)}
+            >
+              A
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="flex flex-col gap-2">
+        <div className="text-sm leading-[15px] text-accent-foreground">
+          Background color
+        </div>
+        <div className="grid grid-cols-6 gap-1.5">
+          {swatches.map((name) => (
+            <button
+              key={name ?? "default"}
+              type="button"
+              className="rte-swatch rte-swatch-fill"
+              style={style(name)}
+              aria-label={label(name)}
+              title={label(name)}
+              aria-pressed={
+                name
+                  ? active?.highlight === highlightValue(name)
+                  : !active?.highlight
+              }
+              onClick={() => pickHighlight(name)}
+            />
+          ))}
+        </div>
+      </section>
     </div>
   )
 }
 
-
-/** the library's table-size picker: sweep the grid to the size, as the
- * source's InsertTable draws it */
+/** the library's table-size picker: sweep the grid to the size */
 function TableSizeGrid({
   onPick,
 }: {
@@ -263,51 +332,88 @@ const ALIGNS = [
   { value: "right", label: "Right", Icon: AlignRightIcon },
   { value: "justify", label: "Justify", Icon: AlignJustifyIcon },
 ] as const
+const SPACINGS = ["1", "1.15", "1.5", "1.75", "2"] as const
+
+function BarTooltip({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactElement
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
+}
 
 /* --------------------------------- toolbar --------------------------------- */
 
 function RichTextToolbar({
   editor,
   disabled,
+  onComment,
 }: {
   editor: TiptapEditor
   disabled?: boolean
+  onComment?: () => void
 }) {
+  // The editor opens with its caret at the top of the document, in the
+  // title, which would name the style select "Heading 1" before anyone had
+  // clicked into the page. Until the editor has been focused or its caret
+  // moved, the select reads "Text".
+  const [engaged, setEngaged] = React.useState(false)
+  React.useEffect(() => {
+    if (editor.isFocused) setEngaged(true)
+    const engage = () => setEngaged(true)
+    editor.on("focus", engage)
+    editor.on("selectionUpdate", engage)
+    return () => {
+      editor.off("focus", engage)
+      editor.off("selectionUpdate", engage)
+    }
+  }, [editor])
+
   const active = useEditorState({
     editor,
     selector: ({ editor: ed }) => ({
       block: activeBlockOf(ed),
       font:
-        FONTS.find(
-          (f) => f.value === ed.getAttributes("textStyle").fontFamily
-        )?.label ?? "Inter",
+        FONTS.find((f) => f.value === ed.getAttributes("textStyle").fontFamily)
+          ?.label ?? "Inter",
+      base: baseSizeAt(ed),
       size: (() => {
         const raw = ed.getAttributes("textStyle").fontSize as
           | string
           | undefined
         const n = raw ? parseInt(raw, 10) : NaN
-        return Number.isFinite(n) ? n : DEFAULT_SIZE
+        return Number.isFinite(n) ? n : baseSizeAt(ed)
       })(),
+      spacing:
+        (ed.getAttributes("textStyle").lineHeight as string | undefined) ??
+        null,
       bold: ed.isActive("bold"),
       italic: ed.isActive("italic"),
       underline: ed.isActive("underline"),
       strike: ed.isActive("strike"),
       code: ed.isActive("code"),
       quote: ed.isActive("blockquote"),
+      bullet: ed.isActive("bulletList"),
+      ordered: ed.isActive("orderedList"),
       todo: ed.isActive("taskList"),
       link: ed.isActive("link"),
       highlight: ed.isActive("highlight"),
       subscript: ed.isActive("subscript"),
       superscript: ed.isActive("superscript"),
-      align:
-        ALIGNS.find((a) => ed.isActive({ textAlign: a.value })) ?? ALIGNS[0],
-      table: ed.isActive("table"),
+      aligns: ALIGNS.map((a) => ed.isActive({ textAlign: a.value })),
       canIndent:
         ed.can().sinkListItem("listItem") || ed.can().sinkListItem("taskItem"),
     }),
   })
-  // an insert with a node selected (a just-placed video or image) would be
-  // refused by the toggles — step the caret past the node first
+  // an insert with a node selected (a just-placed block) would be refused
+  // by the toggles — step the caret past the node first
   const chain = () => {
     const { selection, doc } = editor.state
     if (selection instanceof NodeSelection) {
@@ -320,111 +426,102 @@ function RichTextToolbar({
     return editor.chain().focus()
   }
 
-  const block = BLOCKS.find((b) => b.value === active?.block) ?? BLOCKS[0]
+  const activeBlockLabel = engaged
+    ? (BLOCKS.find((b) => b.value === active?.block)?.label ?? "Text")
+    : "Text"
 
-  // the link panel, under the selection — the source's picker, not the
-  // browser's prompt
-  const [linkPanel, setLinkPanel] = React.useState<{
-    x: number
-    y: number
-    href: string
-  } | null>(null)
-  const setLink = () => {
-    const { from } = editor.state.selection
-    const coords = editor.view.coordsAtPos(from)
-    setLinkPanel({
-      x: coords.left,
-      y: coords.bottom + 8,
-      href: (editor.getAttributes("link").href as string) ?? "",
-    })
-  }
-  const applyLink = () => {
-    if (!linkPanel) return
-    const href = linkPanel.href.trim()
-    if (href) chain().extendMarkRange("link").setLink({ href }).run()
-    else chain().extendMarkRange("link").unsetLink().run()
-    setLinkPanel(null)
-  }
-  const fileRef = React.useRef<HTMLInputElement>(null)
-  const attachRef = React.useRef<HTMLInputElement>(null)
   const audioRef = React.useRef<HTMLInputElement>(null)
   const videoRef = React.useRef<HTMLInputElement>(null)
-  const insertVideoFile = (file: File | undefined) => {
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () =>
-      chain()
-        .insertContent({
-          type: "video",
-          attrs: { src: reader.result as string, title: file.name },
-        })
-        .run()
-    reader.readAsDataURL(file)
+  const attachRef = React.useRef<HTMLInputElement>(null)
+
+  // ---- media by URL: the modal with its title, the field, the action
+  type UrlKind = "video" | "audio" | "file"
+  const URL_TITLES: Record<UrlKind, string> = {
+    video: "Insert video",
+    audio: "Insert audio",
+    file: "Attach file",
   }
-  const insertAudio = (file: File | undefined) => {
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () =>
-      chain()
-        .insertContent({
-          type: "audio",
-          attrs: { src: reader.result as string, title: file.name },
-        })
-        .run()
-    reader.readAsDataURL(file)
-  }
-  const insertEmbed = () => {
-    const src = window.prompt("Embed URL")
-    if (src) chain().insertContent({ type: "embed", attrs: { src } }).run()
-  }
-  const insertAttachment = (file: File | undefined) => {
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = () =>
-      chain()
+  const [urlDialog, setUrlDialog] = React.useState<{
+    kind: UrlKind
+    url: string
+    name: string
+  } | null>(null)
+  const insertUrl = () => {
+    const d = urlDialog
+    if (!d) return
+    const url = d.url.trim()
+    if (!url) return
+    const c = chain()
+    if (d.kind === "video") {
+      if (/youtube\.com|youtu\.be/.test(url)) c.setYoutubeVideo({ src: url }).run()
+      else c.insertContent({ type: "video", attrs: { src: url } }).run()
+    } else if (d.kind === "audio")
+      c.insertContent({ type: "audio", attrs: { src: url } }).run()
+    else
+      c
         .insertContent({
           type: "attachment",
           attrs: {
-            href: reader.result as string,
-            fileName: file.name,
-            fileSize: file.size,
-            mimeType: file.type,
+            href: url,
+            fileName: d.name.trim() || url.split("/").pop() || "file",
           },
         })
         .run()
-    reader.readAsDataURL(file)
+    setUrlDialog(null)
   }
-  const insertImage = (file: File | undefined) => {
-    if (!file) return
+
+  const takeFile =
+    (insert: (file: File) => void) =>
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      if (file) insert(file)
+      event.target.value = ""
+    }
+  const asDataURL = (file: File, use: (src: string) => void) => {
     const reader = new FileReader()
-    reader.onload = () =>
-      chain().setImage({ src: reader.result as string }).run()
+    reader.onload = () => use(reader.result as string)
     reader.readAsDataURL(file)
   }
-  const insertVideo = () => {
-    const src = window.prompt("YouTube URL")
-    if (src) chain().setYoutubeVideo({ src }).run()
-  }
 
-  const stepSize = (delta: number) => {
-    const next = Math.min(72, Math.max(8, (active?.size ?? DEFAULT_SIZE) + delta))
-    if (next === DEFAULT_SIZE) chain().unsetFontSize().run()
-    else chain().setFontSize(`${next}px`).run()
-  }
-
-  const selectTrigger = (label: string, child: React.ReactNode) => (
-    <button
-      type="button"
-      aria-label={label}
-      disabled={disabled}
-      className={controlClass}
-    >
-      {child}
-      <SmallDownIcon className="size-4! text-muted-foreground" />
-    </button>
+  const mediaMenu = (
+    label: string,
+    Icon: React.ComponentType<React.SVGProps<SVGSVGElement>>,
+    kind: UrlKind,
+    fromDisk: () => void
+  ) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={disabled}
+        render={
+          <button type="button" className="rte-select" aria-label={label}>
+            <Icon className="size-4" />
+            <SmallDownIcon className="size-4" />
+          </button>
+        }
+      />
+      <DropdownMenuContent align="start" sideOffset={4}>
+        <DropdownMenuItem onClick={fromDisk}>
+          Insert from computer
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() => setUrlDialog({ kind, url: "", name: "" })}
+        >
+          Insert via URL
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 
-  const AlignIcon = active?.align.Icon ?? AlignLeftIcon
+  const imageColumnsItems = (close?: boolean) =>
+    [1, 2, 3].map((n) => (
+      <DropdownMenuItem
+        key={n}
+        onClick={() => chain().insertImageColumns(n).run()}
+      >
+        {n === 1 ? "1 column" : `${n} columns`}
+      </DropdownMenuItem>
+    ))
+
   const [tableMenuOpen, setTableMenuOpen] = React.useState(false)
 
   return (
@@ -434,21 +531,65 @@ function RichTextToolbar({
         aria-label="Formatting"
         aria-disabled={disabled || undefined}
         data-slot="rich-text-editor-toolbar"
-        className="sticky top-0 z-10 flex h-9 shrink-0 items-center overflow-x-auto border-b border-border-soft bg-background px-1"
+        className="rte-toolbar sticky top-0 z-10 flex h-9 shrink-0 items-center overflow-x-auto overflow-y-hidden border-b border-border-soft bg-background px-1"
+        // a press on the bar leaves the focus in the document: the selection
+        // stays live, so the floating bar over it neither hides nor jumps
+        // while a size is stepped or a mark set. A field keeps its focus.
+        onMouseDown={(event) => {
+          const target = event.target as HTMLElement
+          if (target.closest("input, textarea, select, [contenteditable='true']"))
+            return
+          event.preventDefault()
+        }}
       >
         {/* + insert */}
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled}
-            render={selectTrigger("Insert", <AddIcon />)}
+            render={
+              <button type="button" className="rte-select" aria-label="Insert">
+                <AddIcon className="size-4" />
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
           />
           <DropdownMenuContent align="start" sideOffset={4}>
-            <DropdownMenuItem onClick={() => fileRef.current?.click()}>
+            <DropdownMenuGroup>
+            <DropdownMenuLabel>Media</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => chain().insertImageSlot().run()}>
               <ImageIcon className="size-4" /> Image
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={insertVideo}>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Grid3Icon className="size-4" /> Image columns
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {imageColumnsItems()}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem onClick={() => videoRef.current?.click()}>
               <VideoIcon className="size-4" /> Video
             </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => audioRef.current?.click()}>
+              <AudioWavesIcon className="size-4" /> Audio
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => attachRef.current?.click()}>
+              <FileUploadIcon className="size-4" /> File
+            </DropdownMenuItem>
+            {/* the file's embed card, as /embed raises it — once the menu
+                has shut: shutting, it hands focus back to its trigger, and
+                the card, raised already, would take that as a press outside */}
+            <DropdownMenuItem
+              onClick={() =>
+                setTimeout(() => chain().insertEmbedSlot().run(), 200)
+              }
+            >
+              <GroupIcon className="size-4" /> Embed
+            </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+            <DropdownMenuLabel>Blocks</DropdownMenuLabel>
             <DropdownMenuItem
               onClick={() =>
                 chain()
@@ -458,36 +599,41 @@ function RichTextToolbar({
             >
               <TableViewIcon className="size-4" /> Table
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => chain().setHorizontalRule().run()}>
-              <DividerIcon className="size-4" /> Divider
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => chain().toggleTaskList().run()}>
-              <TodoIcon className="size-4" /> To-do list
-            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => chain().toggleCodeBlock().run()}>
               <CodeIcon className="size-4" /> Code block
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => audioRef.current?.click()}>
-              <AudioWavesIcon className="size-4" /> Audio
+            <DropdownMenuItem onClick={() => chain().toggleBlockquote().run()}>
+              <QuoteIcon className="size-4" /> Quote
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={insertEmbed}>
-              <GroupIcon className="size-4" /> Embed
+            <DropdownMenuItem onClick={() => chain().setHorizontalRule().run()}>
+              <DividerIcon className="size-4" /> Divider
             </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={() =>
-                chain()
-                  .insertContent({
-                    type: "callout",
-                    content: [{ type: "paragraph" }],
-                  })
-                  .run()
-              }
-            >
+            <DropdownMenuItem onClick={() => chain().setCallout().run()}>
               <QuoteIcon className="size-4" /> Callout
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => chain().setDetails().run()}>
-              <SmallDownIcon className="size-4" /> Expand / collapse
+            <DropdownMenuItem onClick={() => applyBlock(chain(), "details")}>
+              <SmallRightIcon className="size-4" /> Toggle list
             </DropdownMenuItem>
+            </DropdownMenuGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+            <DropdownMenuLabel>Layout</DropdownMenuLabel>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Grid3Icon className="size-4" /> Columns
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {[2, 3, 4].map((n) => (
+                  <DropdownMenuItem
+                    key={n}
+                    onClick={() => chain().insertColumns(n).run()}
+                  >
+                    {n} columns
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -495,29 +641,40 @@ function RichTextToolbar({
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled}
-            render={selectTrigger(
-              "Block style",
-              <span className="grid px-0.5 text-left text-sm">
-                {BLOCKS.map((item) => (
-                  <span
-                    key={item.value}
-                    aria-hidden={item.value !== block.value || undefined}
-                    className={cn(
-                      "col-start-1 row-start-1 whitespace-nowrap",
-                      item.value !== block.value && "invisible"
-                    )}
-                  >
-                    {item.label}
-                  </span>
-                ))}
-              </span>
-            )}
+            render={
+              <button
+                type="button"
+                className="rte-select"
+                aria-label="Text style"
+              >
+                {/* every style's name laid in one cell, the others unseen,
+                    so the select is as wide as the longest and the controls
+                    after it hold still as the caret moves */}
+                <span className="grid justify-items-start text-left text-base leading-4">
+                  {BLOCKS.map((item) => (
+                    <span
+                      key={item.value}
+                      aria-hidden={item.label !== activeBlockLabel || undefined}
+                      className={cn(
+                        "col-start-1 row-start-1 whitespace-nowrap",
+                        item.label !== activeBlockLabel && "invisible"
+                      )}
+                    >
+                      {item.label}
+                    </span>
+                  ))}
+                </span>
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
           />
           <DropdownMenuContent align="start" sideOffset={4}>
             {BLOCKS.map((item) => (
               <DropdownMenuItem
                 key={item.value}
-                data-selected={active?.block === item.value || undefined}
+                data-selected={
+                  (engaged && active?.block === item.value) || undefined
+                }
                 className="data-selected:bg-secondary"
                 onClick={() => applyBlock(chain(), item.value)}
               >
@@ -528,21 +685,36 @@ function RichTextToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* font family */}
+        {/* font */}
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled}
-            render={selectTrigger(
-              "Font",
-              <span className="px-0.5 text-sm whitespace-nowrap">
-                {active?.font ?? "Inter"}
-              </span>
-            )}
+            render={
+              <button type="button" className="rte-select" aria-label="Font">
+                <span className="grid justify-items-start text-left text-base leading-4">
+                  {FONTS.map((font) => (
+                    <span
+                      key={font.label}
+                      aria-hidden={font.label !== active?.font || undefined}
+                      className={cn(
+                        "col-start-1 row-start-1 whitespace-nowrap",
+                        font.label !== active?.font && "invisible"
+                      )}
+                    >
+                      {font.label}
+                    </span>
+                  ))}
+                </span>
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
           />
           <DropdownMenuContent align="start" sideOffset={4}>
             {FONTS.map((font) => (
               <DropdownMenuItem
                 key={font.label}
+                data-selected={active?.font === font.label || undefined}
+                className="data-selected:bg-secondary"
                 onClick={() =>
                   font.value
                     ? chain().setFontFamily(font.value).run()
@@ -555,60 +727,167 @@ function RichTextToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* size: − 14 + */}
-        <div className="flex h-7 shrink-0 items-center gap-1 p-0.5" aria-label="Font size">
-          <Control label="Smaller" disabled={disabled} className="size-6 min-w-6 rounded-lg bg-secondary not-disabled:hover:bg-muted" onClick={() => stepSize(-1)}>
-            <DividerIcon className="size-3.5!" />
-          </Control>
-          <span className="w-6 text-center text-base leading-4 tabular-nums text-secondary-foreground">
+        {/* size: − 15 + (the block's own size until one is set) */}
+        <div
+          className="flex h-7 shrink-0 items-center gap-1 p-0.5"
+          aria-label="Font size"
+        >
+          <BarTooltip label="Smaller">
+            <button
+              type="button"
+              className="rte-step"
+              aria-label="Smaller text"
+              disabled={disabled}
+              onClick={() => {
+                const next = Math.min(
+                  72,
+                  Math.max(8, (active?.size ?? DEFAULT_SIZE) - 1)
+                )
+                // back at the block's own size: no size of its own to keep
+                if (next === (active?.base ?? DEFAULT_SIZE))
+                  chain().unsetFontSize().run()
+                else chain().setFontSize(`${next}px`).run()
+              }}
+            >
+              <DividerIcon className="size-3.5" />
+            </button>
+          </BarTooltip>
+          <span className="w-6 text-center text-base leading-4 text-secondary-foreground tabular-nums">
             {active?.size ?? DEFAULT_SIZE}
           </span>
-          <Control label="Larger" disabled={disabled} className="size-6 min-w-6 rounded-lg bg-secondary not-disabled:hover:bg-muted" onClick={() => stepSize(1)}>
-            <AddIcon className="size-3.5!" />
-          </Control>
+          <BarTooltip label="Larger">
+            <button
+              type="button"
+              className="rte-step"
+              aria-label="Larger text"
+              disabled={disabled}
+              onClick={() => {
+                const next = Math.min(
+                  72,
+                  Math.max(8, (active?.size ?? DEFAULT_SIZE) + 1)
+                )
+                // back at the block's own size: no size of its own to keep
+                if (next === (active?.base ?? DEFAULT_SIZE))
+                  chain().unsetFontSize().run()
+                else chain().setFontSize(`${next}px`).run()
+              }}
+            >
+              <AddIcon className="size-3.5" />
+            </button>
+          </BarTooltip>
         </div>
 
-        {/* marks */}
-        <Control label="Bold" pressed={active?.bold} disabled={disabled} onClick={() => chain().toggleBold().run()}>
-          <MarkBoldIcon className="size-4" />
-        </Control>
-        <Control label="Italic" pressed={active?.italic} disabled={disabled} onClick={() => chain().toggleItalic().run()}>
-          <MarkItalicIcon className="size-4" />
-        </Control>
-        <Control label="Underline" pressed={active?.underline} disabled={disabled} onClick={() => chain().toggleUnderline().run()}>
-          <MarkUnderlineIcon className="size-4" />
-        </Control>
-        <Control label="Strikethrough" pressed={active?.strike} disabled={disabled} onClick={() => chain().toggleStrike().run()}>
-          <MarkStrikeIcon className="size-4" />
-        </Control>
+        {/* B I U S */}
+        {(
+          [
+            ["Bold", MarkBoldIcon, active?.bold, () => chain().toggleBold()],
+            [
+              "Italic",
+              MarkItalicIcon,
+              active?.italic,
+              () => chain().toggleItalic(),
+            ],
+            [
+              "Underline",
+              MarkUnderlineIcon,
+              active?.underline,
+              () => chain().toggleUnderline(),
+            ],
+            [
+              "Strikethrough",
+              MarkStrikeIcon,
+              active?.strike,
+              () => chain().toggleStrike(),
+            ],
+          ] as const
+        ).map(([label, Icon, pressed, run]) => (
+          <BarTooltip key={label} label={label}>
+            <button
+              type="button"
+              className="rte-btn"
+              aria-pressed={pressed}
+              aria-label={label}
+              disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => run().run()}
+            >
+              <Icon className="size-4" />
+            </button>
+          </BarTooltip>
+        ))}
 
-        {/* colour */}
-        <ColorPopover editor={editor} disabled={disabled} />
+        {/* text colour: the A in a 24px outlined box, the chevron beside */}
+        <ColorSelect editor={editor} disabled={disabled} />
 
-        <BarDivider />
-        <Control label="Inline code" pressed={active?.code} disabled={disabled} onClick={() => chain().toggleCode().run()}>
-          <CodeIcon />
-        </Control>
-        <Control label="Quote" pressed={active?.quote} disabled={disabled} onClick={() => chain().toggleBlockquote().run()}>
-          <QuoteIcon />
-        </Control>
-        <Control label="Divider" disabled={disabled} onClick={() => chain().setHorizontalRule().run()}>
-          <DividerIcon />
-        </Control>
+        <span className="rte-tb-divider" aria-hidden="true" />
 
-        <BarDivider />
+        {(
+          [
+            ["Code", CodeIcon, active?.code, () => chain().toggleCode()],
+            [
+              "Quote",
+              QuoteIcon,
+              active?.quote,
+              () => chain().toggleBlockquote(),
+            ],
+            [
+              "Divider",
+              DividerIcon,
+              false,
+              () => chain().setHorizontalRule(),
+            ],
+          ] as const
+        ).map(([label, Icon, pressed, run], i) => (
+          <BarTooltip key={label} label={label}>
+            <button
+              type="button"
+              // 1px apart, so two pressed grounds side by side stay two
+              className={cn("rte-btn", i > 0 && "ml-px")}
+              aria-pressed={pressed || undefined}
+              aria-label={label}
+              disabled={disabled}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => run().run()}
+            >
+              <Icon className="size-4" />
+            </button>
+          </BarTooltip>
+        ))}
+
+        <span className="rte-tb-divider" aria-hidden="true" />
+
         {/* lists */}
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled}
-            render={selectTrigger("Lists", <NumberedListIcon />)}
+            render={
+              <button type="button" className="rte-select" aria-label="Lists">
+                <NumberedListIcon className="size-4" />
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
           />
           <DropdownMenuContent align="start" sideOffset={4}>
-            <DropdownMenuItem onClick={() => chain().toggleBulletList().run()}>
+            <DropdownMenuItem
+              data-selected={active?.bullet || undefined}
+              className="data-selected:bg-secondary"
+              onClick={() => chain().toggleBulletList().run()}
+            >
               <MultipleListIcon className="size-4" /> Bulleted list
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => chain().toggleOrderedList().run()}>
+            <DropdownMenuItem
+              data-selected={active?.ordered || undefined}
+              className="data-selected:bg-secondary"
+              onClick={() => chain().toggleOrderedList().run()}
+            >
               <NumberedListIcon className="size-4" /> Numbered list
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-selected={active?.todo || undefined}
+              className="data-selected:bg-secondary"
+              onClick={() => chain().toggleTaskList().run()}
+            >
+              <TodoIcon className="size-4" /> To-do list
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -616,12 +895,23 @@ function RichTextToolbar({
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled}
-            render={selectTrigger("Alignment", <AlignIcon />)}
+            render={
+              <button
+                type="button"
+                className="rte-select"
+                aria-label="Alignment"
+              >
+                <AlignLeftIcon className="size-4" />
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
           />
           <DropdownMenuContent align="start" sideOffset={4}>
-            {ALIGNS.map((item) => (
+            {ALIGNS.map((item, i) => (
               <DropdownMenuItem
                 key={item.value}
+                data-selected={active?.aligns[i] || undefined}
+                className="data-selected:bg-secondary"
                 onClick={() => chain().setTextAlign(item.value).run()}
               >
                 <item.Icon className="size-4" />
@@ -634,15 +924,30 @@ function RichTextToolbar({
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled}
-            render={selectTrigger("Line spacing", <AudioWavesIcon className="rotate-90" />)}
+            render={
+              <button
+                type="button"
+                className="rte-select"
+                aria-label="Line spacing"
+              >
+                <AlignJustifyIcon className="size-4" />
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
           />
           <DropdownMenuContent align="start" sideOffset={4}>
-            <DropdownMenuItem onClick={() => chain().unsetLineHeight().run()}>
+            <DropdownMenuItem
+              data-selected={!active?.spacing || undefined}
+              className="data-selected:bg-secondary"
+              onClick={() => chain().unsetLineHeight().run()}
+            >
               Default
             </DropdownMenuItem>
             {SPACINGS.map((spacing) => (
               <DropdownMenuItem
                 key={spacing}
+                data-selected={active?.spacing === spacing || undefined}
+                className="data-selected:bg-secondary"
                 onClick={() => chain().setLineHeight(spacing).run()}
               >
                 {spacing}
@@ -650,32 +955,59 @@ function RichTextToolbar({
             ))}
           </DropdownMenuContent>
         </DropdownMenu>
-        <Control label="To-do list" pressed={active?.todo} disabled={disabled} onClick={() => chain().toggleTaskList().run()}>
-          <TodoIcon />
-        </Control>
-        <Control
-          label="Indent"
-          disabled={disabled || !active?.canIndent}
-          onClick={() => {
-            if (!chain().sinkListItem("listItem").run())
-              chain().sinkListItem("taskItem").run()
-          }}
-        >
-          <GroupIcon />
-        </Control>
+        <BarTooltip label="To-do list">
+          <button
+            type="button"
+            className="rte-btn"
+            aria-pressed={active?.todo}
+            aria-label="To-do list"
+            disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => chain().toggleTaskList().run()}
+          >
+            <TodoIcon className="size-4" />
+          </button>
+        </BarTooltip>
+        <BarTooltip label="Indent">
+          <button
+            type="button"
+            className="rte-btn"
+            aria-label="Indent"
+            disabled={disabled || !active?.canIndent}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              if (!chain().sinkListItem("listItem").run())
+                chain().sinkListItem("taskItem").run()
+            }}
+          >
+            <GroupIcon className="size-4" />
+          </button>
+        </BarTooltip>
 
-        <BarDivider />
-        <Control label="Link" pressed={active?.link} disabled={disabled} onClick={setLink}>
-          <LinkIcon />
-        </Control>
+        <span className="rte-tb-divider" aria-hidden="true" />
+
+        <BarTooltip label="Link">
+          <button
+            type="button"
+            className="rte-btn"
+            aria-pressed={active?.link}
+            aria-label="Link"
+            disabled={disabled}
+            onClick={() => editor.commands.openLinkEditor()}
+          >
+            <LinkIcon className="size-4" />
+          </button>
+        </BarTooltip>
         {/* table */}
-        <DropdownMenu
-          open={tableMenuOpen}
-          onOpenChange={setTableMenuOpen}
-        >
+        <DropdownMenu open={tableMenuOpen} onOpenChange={setTableMenuOpen}>
           <DropdownMenuTrigger
             disabled={disabled}
-            render={selectTrigger("Table", <TableViewIcon />)}
+            render={
+              <button type="button" className="rte-select" aria-label="Table">
+                <TableViewIcon className="size-4" />
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
           />
           <DropdownMenuContent align="start" sideOffset={4}>
             <TableSizeGrid
@@ -684,42 +1016,9 @@ function RichTextToolbar({
                 setTableMenuOpen(false)
               }}
             />
-            {active?.table && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => chain().addRowAfter().run()}>
-                  Add row below
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => chain().addColumnAfter().run()}>
-                  Add column right
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => chain().deleteRow().run()}>
-                  Delete row
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => chain().deleteColumn().run()}>
-                  Delete column
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!editor.can().mergeCells()}
-                  onClick={() => chain().mergeCells().run()}
-                >
-                  Merge cells
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!editor.can().splitCell()}
-                  onClick={() => chain().splitCell().run()}
-                >
-                  Split cell
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => chain().deleteTable().run()}>
-                  Delete table
-                </DropdownMenuItem>
-              </>
-            )}
           </DropdownMenuContent>
         </DropdownMenu>
-        {/* emoji — the espresso emoji picker on a bar control */}
+        {/* emoji */}
         <EmojiPicker
           onValueChange={(emoji) => chain().insertContent(emoji).run()}
         >
@@ -729,168 +1028,133 @@ function RichTextToolbar({
                 type="button"
                 aria-label="Emoji"
                 disabled={disabled}
-                className={controlClass}
+                className="rte-select"
               >
-                <AddEmoji1Icon />
-                <SmallDownIcon className="size-4! text-muted-foreground" />
+                <AddEmoji1Icon className="size-4" />
+                <SmallDownIcon className="size-4" />
               </button>
             }
           />
           <EmojiPickerContent />
         </EmojiPicker>
 
-        <BarDivider />
-        {(
-          [
-            { label: "Image", Icon: ImageIcon, items: [
-              { label: "Add image", run: () => fileRef.current?.click() },
-              { label: "From URL", run: () => {
-                const src = window.prompt("Image URL")
-                if (src) chain().setImage({ src }).run()
-              } },
-            ] },
-            { label: "Video", Icon: VideoIcon, items: [
-              { label: "Add video", run: () => videoRef.current?.click() },
-              { label: "From YouTube URL", run: insertVideo },
-            ] },
-            { label: "Audio", Icon: AudioWavesIcon, items: [{ label: "Add audio", run: () => audioRef.current?.click() }] },
-            { label: "File", Icon: FileUploadIcon, items: [{ label: "Add file", run: () => attachRef.current?.click() }] },
-          ] as const
-        ).map((media) => (
-          <DropdownMenu key={media.label}>
-            <DropdownMenuTrigger
-              disabled={disabled}
-              render={selectTrigger(media.label, <media.Icon />)}
-            />
-            <DropdownMenuContent align="start" sideOffset={4}>
-              {media.items.map((item) => (
-                <DropdownMenuItem key={item.label} onClick={item.run}>
-                  {item.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ))}
+        <span className="rte-tb-divider" aria-hidden="true" />
 
-        <BarDivider />
-        {/* highlighter: the default wash, yellow */}
-        <Control
-          label="Highlight"
-          pressed={active?.highlight}
-          disabled={disabled}
-          onClick={() =>
-            chain().toggleHighlight({ color: highlightValue("yellow") }).run()
-          }
-        >
-          <svg viewBox="0 0 32 32" className="size-4" aria-hidden="true">
-            <path
-              d="M7 25h18M11 20l8.5-8.5a2.4 2.4 0 0 1 3.4 0l.6.6a2.4 2.4 0 0 1 0 3.4L15 24h-4v-4Z"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
-            />
-          </svg>
-        </Control>
-
-        {/* ⋯ more */}
+        {/* image: the slot, and the rows of slots */}
         <DropdownMenu>
           <DropdownMenuTrigger
             disabled={disabled}
             render={
-              <button
-                type="button"
-                aria-label="More"
-                className={controlClass}
-              >
-                <DotHorizontalIcon />
+              <button type="button" className="rte-select" aria-label="Image">
+                <ImageIcon className="size-4" />
+                <SmallDownIcon className="size-4" />
+              </button>
+            }
+          />
+          <DropdownMenuContent align="start" sideOffset={4}>
+            <DropdownMenuItem onClick={() => chain().insertImageSlot().run()}>
+              <ImageIcon className="size-4" /> Add image
+            </DropdownMenuItem>
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger>
+                <Grid3Icon className="size-4" /> Image columns
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                {imageColumnsItems()}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {mediaMenu("Video", VideoIcon, "video", () =>
+          videoRef.current?.click()
+        )}
+        {mediaMenu("Audio", AudioWavesIcon, "audio", () =>
+          audioRef.current?.click()
+        )}
+        {mediaMenu("File", FileUploadIcon, "file", () =>
+          attachRef.current?.click()
+        )}
+
+        <span className="rte-tb-divider" aria-hidden="true" />
+
+        <BarTooltip label="Highlight">
+          <button
+            type="button"
+            className="rte-btn"
+            aria-pressed={active?.highlight}
+            aria-label="Highlight"
+            disabled={disabled}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() =>
+              chain().toggleHighlight({ color: highlightValue("yellow") }).run()
+            }
+          >
+            <HighlightIcon className="size-4" />
+          </button>
+        </BarTooltip>
+        <BarTooltip label="Comment">
+          <button
+            type="button"
+            className="rte-btn"
+            aria-label="Comment"
+            disabled={disabled}
+            onClick={() => onComment?.()}
+          >
+            <Comment1Icon className="size-4" />
+          </button>
+        </BarTooltip>
+
+        <span className="rte-tb-divider" aria-hidden="true" />
+
+        {/* ⋯ overflow */}
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            disabled={disabled}
+            render={
+              <button type="button" aria-label="More" className="rte-btn">
+                <DotHorizontalIcon className="size-4" />
               </button>
             }
           />
           <DropdownMenuContent align="end" sideOffset={4}>
-            <DropdownMenuItem onClick={() => chain().undo().run()}>
-              Undo
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => chain().redo().run()}>
-              Redo
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => chain().toggleSubscript().run()}>
-              <SubscriptIcon className="size-4" /> Subscript
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => chain().toggleSuperscript().run()}>
+            <DropdownMenuItem
+              data-selected={active?.superscript || undefined}
+              className="data-selected:bg-secondary"
+              onClick={() => chain().toggleSuperscript().run()}
+            >
               <SuperscriptIcon className="size-4" /> Superscript
             </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem
-              onClick={() => chain().clearNodes().unsetAllMarks().run()}
+              data-selected={active?.subscript || undefined}
+              className="data-selected:bg-secondary"
+              onClick={() => chain().toggleSubscript().run()}
+            >
+              <SubscriptIcon className="size-4" /> Subscript
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => chain().unsetAllMarks().clearNodes().run()}
             >
               <ClearFormattingIcon className="size-4" /> Clear formatting
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {linkPanel &&
-          createPortal(
-            <div
-              data-slot="rich-text-editor-link-panel"
-              className="fixed z-70 flex w-80 items-center gap-1.5 rounded-xl border border-border-soft bg-card p-1.5 shadow-elevation-lg"
-              style={{ left: linkPanel.x, top: linkPanel.y }}
-            >
-              <Input
-                autoFocus
-                size="sm"
-                variant="subtle"
-                placeholder="Paste a link"
-                value={linkPanel.href}
-                onChange={(event) =>
-                  setLinkPanel({ ...linkPanel, href: event.target.value })
-                }
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") applyLink()
-                  if (event.key === "Escape") setLinkPanel(null)
-                }}
-              />
-              <Button size="xs" onClick={applyLink}>
-                Apply
-              </Button>
-              {editor.isActive("link") && (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  onClick={() => {
-                    chain().extendMarkRange("link").unsetLink().run()
-                    setLinkPanel(null)
-                  }}
-                >
-                  Remove
-                </Button>
-              )}
-            </div>,
-            document.body
-          )}
-        <input
-          ref={fileRef}
-          data-slot="rte-image-input"
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(event) => {
-            insertImage(event.target.files?.[0])
-            event.target.value = ""
-          }}
-        />
         <input
           ref={videoRef}
           data-slot="rte-video-input"
           type="file"
           accept="video/*"
           className="hidden"
-          onChange={(event) => {
-            insertVideoFile(event.target.files?.[0])
-            event.target.value = ""
-          }}
+          onChange={takeFile((file) =>
+            asDataURL(file, (src) =>
+              chain()
+                .insertContent({
+                  type: "video",
+                  attrs: { src, title: file.name },
+                })
+                .run()
+            )
+          )}
         />
         <input
           ref={audioRef}
@@ -898,27 +1162,95 @@ function RichTextToolbar({
           type="file"
           accept="audio/*"
           className="hidden"
-          onChange={(event) => {
-            insertAudio(event.target.files?.[0])
-            event.target.value = ""
-          }}
+          onChange={takeFile((file) =>
+            chain()
+              .insertContent({
+                type: "audio",
+                attrs: { src: URL.createObjectURL(file), title: file.name },
+              })
+              .run()
+          )}
         />
         <input
           ref={attachRef}
           data-slot="rte-attach-input"
           type="file"
           className="hidden"
-          onChange={(event) => {
-            insertAttachment(event.target.files?.[0])
-            event.target.value = ""
-          }}
+          onChange={takeFile((file) =>
+            asDataURL(file, (src) =>
+              chain()
+                .insertContent({
+                  type: "attachment",
+                  attrs: {
+                    href: src,
+                    fileName: file.name,
+                    fileSize: file.size,
+                    mimeType: file.type,
+                  },
+                })
+                .run()
+            )
+          )}
         />
+
+        {/* by URL: the modal with its title, the field, and the action */}
+        <Dialog
+          open={!!urlDialog}
+          onOpenChange={(open) => !open && setUrlDialog(null)}
+        >
+          <DialogContent className="w-[360px]">
+            <DialogHeader>
+              <DialogTitle>
+                {urlDialog ? URL_TITLES[urlDialog.kind] : ""}
+              </DialogTitle>
+            </DialogHeader>
+            {urlDialog && (
+              <form
+                className="flex flex-col gap-3"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  insertUrl()
+                }}
+              >
+                <Input
+                  autoFocus
+                  placeholder="https://"
+                  aria-label="URL"
+                  value={urlDialog.url}
+                  onChange={(e) =>
+                    setUrlDialog({ ...urlDialog, url: e.target.value })
+                  }
+                />
+                {urlDialog.kind === "file" && (
+                  <Input
+                    placeholder="report.pdf"
+                    aria-label="File name"
+                    value={urlDialog.name}
+                    onChange={(e) =>
+                      setUrlDialog({ ...urlDialog, name: e.target.value })
+                    }
+                  />
+                )}
+              </form>
+            )}
+            <DialogFooter>
+              <Button
+                className="w-full"
+                disabled={!urlDialog?.url.trim()}
+                onClick={insertUrl}
+              >
+                {urlDialog?.kind === "file" ? "Attach" : "Insert"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </TooltipProvider>
   )
 }
 
-function ColorPopover({
+/** the toolbar's colour select: the 24px outlined A, the chevron beside */
+function ColorSelect({
   editor,
   disabled,
 }: {
@@ -930,29 +1262,34 @@ function ColorPopover({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         disabled={disabled}
-        className={undefined}
         render={
           <button
             type="button"
             aria-label="Text colour"
+            title="Text colour"
             onMouseDown={(event) => event.preventDefault()}
-            className={controlClass}
+            className={cn("rte-select rte-select-tight", open && "is-open")}
           >
-            <TextIcon />
-            <SmallDownIcon className="size-4! text-muted-foreground" />
+            <span>
+              <TextIcon className="size-3.5" />
+            </span>
+            <SmallDownIcon className="size-4" />
           </button>
         }
       />
-      <PopoverContent align="start" sideOffset={6} className="w-auto p-2">
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        initialFocus={false}
+        className="w-auto rounded-xl border-none bg-transparent p-0 shadow-none"
+      >
         <ColorPanel editor={editor} onPick={() => setOpen(false)} />
       </PopoverContent>
     </Popover>
   )
 }
 
-
-/** the floating bar over a run of text, as the file draws it: the block
- * style's select, the marks, link, colour and highlight, then the aligns */
+/** the floating bar over a run of text, as the file draws it (35728:87337) */
 function SelectionBar({ editor }: { editor: TiptapEditor }) {
   const active = useEditorState({
     editor,
@@ -973,8 +1310,6 @@ function SelectionBar({ editor }: { editor: TiptapEditor }) {
   const [colorOpen, setColorOpen] = React.useState(false)
   const chain = () => editor.chain().focus()
   const block = BLOCKS.find((b) => b.value === active?.block) ?? BLOCKS[0]
-  const bubbleBtn =
-    "flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-lg text-secondary-foreground transition-colors hover:bg-secondary aria-pressed:bg-secondary data-popup-open:bg-secondary"
   const button = (
     label: string,
     pressed: boolean | undefined,
@@ -991,7 +1326,7 @@ function SelectionBar({ editor }: { editor: TiptapEditor }) {
               aria-pressed={pressed}
               onMouseDown={(event) => event.preventDefault()}
               onClick={onClick}
-              className={bubbleBtn}
+              className="rte-bubble-btn"
             >
               {child}
             </button>
@@ -1002,19 +1337,16 @@ function SelectionBar({ editor }: { editor: TiptapEditor }) {
     </TooltipProvider>
   )
   return (
-    <div
-      role="toolbar"
-      aria-label="Text formatting"
-      className="flex h-7 items-center rounded-[10px] bg-card p-0.5 shadow-elevation-md"
-    >
-      {/* the block style select, its 180px menu beneath */}
+    <div className="rte-bubble" role="toolbar" aria-label="Text formatting">
+      {/* the block style select: "Text ⌄", its 180px menu 10px beneath,
+          flush with the bar's left edge */}
       <DropdownMenu>
         <DropdownMenuTrigger
           render={
             <button
               type="button"
               aria-label="Text style"
-              className="flex h-6 min-w-[100px] shrink-0 cursor-pointer items-center justify-between gap-1 rounded-[6px] py-1 pr-1 pl-1.5 text-secondary-foreground transition-colors hover:bg-secondary data-popup-open:bg-secondary"
+              className="rte-bubble-select"
             >
               <span className="text-sm leading-[15px] whitespace-nowrap">
                 {block.label}
@@ -1026,7 +1358,7 @@ function SelectionBar({ editor }: { editor: TiptapEditor }) {
         <DropdownMenuContent
           align="start"
           sideOffset={10}
-          className="w-[180px]"
+          className="w-[180px] rounded-[10px] shadow-elevation-xl"
         >
           {BLOCKS.map((item) => (
             <DropdownMenuItem
@@ -1042,158 +1374,109 @@ function SelectionBar({ editor }: { editor: TiptapEditor }) {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {button("Bold", active?.bold, () => chain().toggleBold().run(), <MarkBoldIcon className="size-3.5" />)}
-      {button("Italic", active?.italic, () => chain().toggleItalic().run(), <MarkItalicIcon className="size-3.5" />)}
-      {button("Underline", active?.underline, () => chain().toggleUnderline().run(), <MarkUnderlineIcon className="size-3.5" />)}
-      {button("Strikethrough", active?.strike, () => chain().toggleStrike().run(), <MarkStrikeIcon className="size-3.5" />)}
-      {button("Link", active?.link, () => {
-        if (editor.isActive("link")) {
-          chain().extendMarkRange("link").unsetLink().run()
-          return
-        }
-        const href = window.prompt("Link URL")
-        if (href) chain().extendMarkRange("link").setLink({ href }).run()
-      }, <LinkIcon className="size-3.5" />)}
+      {button("Bold", active?.bold, () => chain().toggleBold().run(), (
+        <MarkBoldIcon className="size-3.5" />
+      ))}
+      {button("Italic", active?.italic, () => chain().toggleItalic().run(), (
+        <MarkItalicIcon className="size-3.5" />
+      ))}
+      {button(
+        "Underline",
+        active?.underline,
+        () => chain().toggleUnderline().run(),
+        <MarkUnderlineIcon className="size-3.5" />
+      )}
+      {button(
+        "Strikethrough",
+        active?.strike,
+        () => chain().toggleStrike().run(),
+        <MarkStrikeIcon className="size-3.5" />
+      )}
+      {button("Link", active?.link, () => editor.commands.openLinkEditor(), (
+        <LinkIcon className="size-3.5" />
+      ))}
 
       {/* colour: the picker card on a popover */}
-      <Popover open={colorOpen} onOpenChange={setColorOpen}>
-        <PopoverTrigger
-          className={undefined}
-          render={
-            <button
-              type="button"
-              aria-label="Text colour"
-              aria-pressed={active?.coloured}
-              onMouseDown={(event) => event.preventDefault()}
-              className={bubbleBtn}
-            >
-              <TextIcon className="size-3.5" />
-            </button>
-          }
-        />
-        <PopoverContent align="start" sideOffset={6} className="w-auto p-2">
-          <ColorPanel editor={editor} onPick={() => setColorOpen(false)} />
-        </PopoverContent>
-      </Popover>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span className="flex">
+                <Popover open={colorOpen} onOpenChange={setColorOpen}>
+                  <PopoverTrigger
+                    render={
+                      <button
+                        type="button"
+                        aria-label="Text colour"
+                        aria-pressed={active?.coloured}
+                        onMouseDown={(event) => event.preventDefault()}
+                        className={cn("rte-bubble-btn", colorOpen && "is-open")}
+                      >
+                        <TextIcon className="size-3.5" />
+                      </button>
+                    }
+                  />
+                  <PopoverContent
+                    align="start"
+                    sideOffset={6}
+                    initialFocus={false}
+                    className="w-auto rounded-xl border-none bg-transparent p-0 shadow-none"
+                  >
+                    <ColorPanel
+                      editor={editor}
+                      onPick={() => setColorOpen(false)}
+                    />
+                  </PopoverContent>
+                </Popover>
+              </span>
+            }
+          />
+          <TooltipContent>Text colour</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
 
       {/* highlight: a marker, so it reads apart from the colour's A */}
-      {button("Highlight", active?.highlighted, () =>
-        chain().toggleHighlight({ color: highlightValue("yellow") }).run(),
-        <HighlightIcon className="size-3.5" />)}
+      {button(
+        "Highlight",
+        active?.highlighted,
+        () =>
+          chain().toggleHighlight({ color: highlightValue("yellow") }).run(),
+        <HighlightIcon className="size-3.5" />
+      )}
 
-      <span
-        aria-hidden="true"
-        className="mx-1 h-4 w-px shrink-0 bg-border-soft"
-      />
+      <span className="rte-bubble-divider" aria-hidden="true" />
 
-      {button("Align left", active?.alignLeft, () => chain().setTextAlign("left").run(), <AlignLeftIcon className="size-3.5" />)}
-      {button("Align centre", active?.alignCenter, () => chain().setTextAlign("center").run(), <AlignCenterIcon className="size-3.5" />)}
-      {button("Align right", active?.alignRight, () => chain().setTextAlign("right").run(), <AlignRightIcon className="size-3.5" />)}
+      {button(
+        "Align left",
+        active?.alignLeft,
+        () => chain().setTextAlign("left").run(),
+        <AlignLeftIcon className="size-3.5" />
+      )}
+      {button(
+        "Align centre",
+        active?.alignCenter,
+        () => chain().setTextAlign("center").run(),
+        <AlignCenterIcon className="size-3.5" />
+      )}
+      {button(
+        "Align right",
+        active?.alignRight,
+        () => chain().setTextAlign("right").run(),
+        <AlignRightIcon className="size-3.5" />
+      )}
     </div>
-  )
-}
-
-
-/** the popup over a clicked link: open it, change it, or take it off */
-function LinkClickPopup({ editor }: { editor: TiptapEditor }) {
-  const [panel, setPanel] = React.useState<{
-    x: number
-    y: number
-    href: string
-    pos: number
-  } | null>(null)
-  React.useEffect(() => {
-    const dom = editor.view.dom
-    const onClick = (event: MouseEvent) => {
-      const target = event.target instanceof Element ? event.target : null
-      const link = target?.closest?.("a[href]:not([data-attachment])")
-      if (!link || !dom.contains(link)) {
-        setPanel(null)
-        return
-      }
-      event.preventDefault()
-      const rect = link.getBoundingClientRect()
-      let pos: number | null = null
-      try {
-        pos = editor.view.posAtDOM(link, 0)
-      } catch {
-        pos = null
-      }
-      if (pos === null) return
-      setPanel({
-        x: rect.left,
-        y: rect.bottom + 6,
-        href: link.getAttribute("href") ?? "",
-        pos,
-      })
-    }
-    dom.addEventListener("click", onClick)
-    return () => dom.removeEventListener("click", onClick)
-  }, [editor])
-  React.useEffect(() => {
-    if (!panel) return
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPanel(null)
-    }
-    window.addEventListener("keydown", close)
-    return () => window.removeEventListener("keydown", close)
-  }, [panel])
-  if (!panel) return null
-  const onLink = (edit: (chain: ChainedCommands) => ChainedCommands) => {
-    const tr = editor.view.state.tr.setSelection(
-      TextSelection.create(editor.view.state.doc, panel.pos + 1)
-    )
-    editor.view.dispatch(tr)
-    edit(editor.chain().focus().extendMarkRange("link")).run()
-    setPanel(null)
-  }
-  return createPortal(
-    <div
-      data-slot="rich-text-editor-link-popup"
-      className="fixed z-70 flex max-w-96 items-center gap-1 rounded-xl border border-border-soft bg-card p-1.5 shadow-elevation-lg"
-      style={{ left: panel.x, top: panel.y }}
-    >
-      <span className="min-w-0 flex-1 truncate px-1 text-sm text-secondary-foreground">
-        {panel.href}
-      </span>
-      <Button
-        size="xs"
-        variant="ghost"
-        onClick={() => window.open(panel.href, "_blank", "noopener")}
-      >
-        Open
-      </Button>
-      <Button
-        size="xs"
-        variant="ghost"
-        onClick={() => {
-          const href = window.prompt("Link URL", panel.href)
-          if (href) onLink((chain) => chain.setLink({ href }))
-        }}
-      >
-        Edit
-      </Button>
-      <Button
-        size="xs"
-        variant="ghost"
-        onClick={() => onLink((chain) => chain.unsetLink())}
-      >
-        Remove
-      </Button>
-    </div>,
-    document.body
   )
 }
 
 /* ---------------------------------- editor --------------------------------- */
 
-// the document's typography: the prose at 14/1.7, the file's headings,
-// and enough of every block the bar can make to draw it properly
+// the document's typography: the prose at 15/1.6 and the file's headings —
+// what the injected stylesheet (styles.tsx) does not already carry
 const docClassName = cn(
   "[&_.ProseMirror]:min-h-60 [&_.ProseMirror]:text-[15px] [&_.ProseMirror]:leading-[1.6] [&_.ProseMirror]:whitespace-pre-wrap [&_.ProseMirror]:outline-none [&_.ProseMirror]:text-secondary-foreground",
   // placeholder
-  "[&_.ProseMirror_p.is-editor-empty:first-child]:before:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child]:before:float-left [&_.ProseMirror_p.is-editor-empty:first-child]:before:h-0 [&_.ProseMirror_p.is-editor-empty:first-child]:before:text-muted-foreground [&_.ProseMirror_p.is-editor-empty:first-child]:before:content-[attr(data-placeholder)]",
-  // headings
+  "[&_.ProseMirror_p.is-editor-empty:first-child]:before:pointer-events-none [&_.ProseMirror_p.is-editor-empty:first-child]:before:float-left [&_.ProseMirror_p.is-editor-empty:first-child]:before:h-0 [&_.ProseMirror_p.is-editor-empty:first-child]:before:text-card-foreground [&_.ProseMirror_p.is-editor-empty:first-child]:before:content-[attr(data-placeholder)]",
+  // headings: 28 down to 15 semibold
   "[&_.ProseMirror_h1]:mt-0 [&_.ProseMirror_h1]:mb-3 [&_.ProseMirror_h1]:text-[28px] [&_.ProseMirror_h1]:leading-[1.3] [&_.ProseMirror_h1]:font-semibold [&_.ProseMirror_h1]:text-foreground",
   "[&_.ProseMirror_h2]:mt-6 [&_.ProseMirror_h2]:mb-2 [&_.ProseMirror_h2]:text-2xl [&_.ProseMirror_h2]:leading-[1.3] [&_.ProseMirror_h2]:font-semibold [&_.ProseMirror_h2]:text-foreground",
   "[&_.ProseMirror_h3]:mt-6 [&_.ProseMirror_h3]:mb-2 [&_.ProseMirror_h3]:text-xl [&_.ProseMirror_h3]:leading-[1.35] [&_.ProseMirror_h3]:font-semibold [&_.ProseMirror_h3]:text-foreground",
@@ -1203,50 +1486,30 @@ const docClassName = cn(
   // blocks
   "[&_.ProseMirror_ul:not([data-type=taskList])]:list-disc [&_.ProseMirror_ul]:my-1 [&_.ProseMirror_ul:not([data-type=taskList])]:pl-6 [&_.ProseMirror_ol]:my-1 [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_ol]:pl-6",
   "[&_.ProseMirror_blockquote]:my-2 [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:border-border [&_.ProseMirror_blockquote]:pl-3 [&_.ProseMirror_blockquote]:text-muted-foreground",
-  "[&_.ProseMirror_pre]:my-2 [&_.ProseMirror_pre]:rounded-lg [&_.ProseMirror_pre]:bg-secondary [&_.ProseMirror_pre]:p-3 [&_.ProseMirror_pre]:font-mono [&_.ProseMirror_pre]:text-sm [&_.ProseMirror_pre]:whitespace-pre-wrap",
+  "[&_.ProseMirror_pre]:my-2 [&_.ProseMirror_pre]:rounded-lg [&_.ProseMirror_pre]:bg-input [&_.ProseMirror_pre]:p-3 [&_.ProseMirror_pre]:font-mono [&_.ProseMirror_pre]:text-sm [&_.ProseMirror_pre]:whitespace-pre-wrap [&_.ProseMirror_pre]:text-secondary-foreground",
   "[&_.ProseMirror_code:not(pre_code)]:rounded-sm [&_.ProseMirror_code:not(pre_code)]:bg-secondary [&_.ProseMirror_code:not(pre_code)]:px-1 [&_.ProseMirror_code:not(pre_code)]:py-0.5 [&_.ProseMirror_code:not(pre_code)]:font-mono [&_.ProseMirror_code:not(pre_code)]:text-[0.9em]",
   "[&_.ProseMirror_hr]:my-6 [&_.ProseMirror_hr]:w-full [&_.ProseMirror_hr]:border-border-soft",
-  "[&_.ProseMirror_a]:text-blue-600 [&_.ProseMirror_a]:underline [&_.ProseMirror_a]:underline-offset-2",
-  "[&_.ProseMirror_img]:my-2 [&_.ProseMirror_img]:max-w-full [&_.ProseMirror_img]:rounded-lg",
+  "[&_.ProseMirror_img]:max-w-full [&_.ProseMirror_img]:rounded-lg",
   "[&_.ProseMirror_iframe]:my-2 [&_.ProseMirror_iframe]:aspect-video [&_.ProseMirror_iframe]:w-full [&_.ProseMirror_iframe]:rounded-lg",
-  // task list
   // the to-do list drawn with the espresso Checkbox's own look
-  "[&_.ProseMirror_ul[data-type=taskList]]:pl-0 [&_.ProseMirror_ul[data-type=taskList]_li]:flex [&_.ProseMirror_ul[data-type=taskList]_li]:items-start [&_.ProseMirror_ul[data-type=taskList]_li]:gap-2 [&_.ProseMirror_ul[data-type=taskList]_li>label]:mt-1 [&_.ProseMirror_ul[data-type=taskList]_li>div]:min-w-0 [&_.ProseMirror_ul[data-type=taskList]_li>div]:flex-1",
-  "[&_.ProseMirror_ul[data-type=taskList]_input]:size-4 [&_.ProseMirror_ul[data-type=taskList]_input]:cursor-pointer [&_.ProseMirror_ul[data-type=taskList]_input]:appearance-none [&_.ProseMirror_ul[data-type=taskList]_input]:rounded-2xs [&_.ProseMirror_ul[data-type=taskList]_input]:border [&_.ProseMirror_ul[data-type=taskList]_input]:border-card-foreground [&_.ProseMirror_ul[data-type=taskList]_input]:bg-background [&_.ProseMirror_ul[data-type=taskList]_input]:transition-all [&_.ProseMirror_ul[data-type=taskList]_input]:duration-[250ms] [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:border-accent-foreground [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:shadow-elevation-sm [&_.ProseMirror_ul[data-type=taskList]_input:active]:scale-[0.97]",
-  "[&_.ProseMirror_ul[data-type=taskList]_input:checked]:border-transparent [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-primary [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22%23FFFFFF%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M20%206%209%2017l-5-5%22/%3E%3C/svg%3E')] [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-size-[12px] [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-center [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-no-repeat [&_.ProseMirror_ul[data-type=taskList]_input:checked:hover]:bg-primary/86",
-  "dark:[&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22%23171717%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M20%206%209%2017l-5-5%22/%3E%3C/svg%3E')]",
-  // tables as the file draws them: the card is the table's viewport — a
-  // 1px rule on a 12px radius, a table grown past it scrolls inside it —
-  // and inside, a gray-100 grid whose outer rules the card draws
-  "[&_.ProseMirror_.tableWrapper]:my-4 [&_.ProseMirror_.tableWrapper]:overflow-x-auto [&_.ProseMirror_.tableWrapper]:overflow-y-hidden [&_.ProseMirror_.tableWrapper]:rounded-xl [&_.ProseMirror_.tableWrapper]:border [&_.ProseMirror_.tableWrapper]:border-border-soft",
-  "[&_.ProseMirror_table]:m-0 [&_.ProseMirror_table]:w-full [&_.ProseMirror_table]:min-w-full [&_.ProseMirror_table]:border-separate [&_.ProseMirror_table]:border-spacing-0 [&_.ProseMirror_table]:text-base [&_.ProseMirror_table]:leading-[21px]",
-  "[&_.ProseMirror_td]:h-10 [&_.ProseMirror_td]:border-0 [&_.ProseMirror_td]:border-r [&_.ProseMirror_td]:border-b [&_.ProseMirror_td]:border-border-soft [&_.ProseMirror_td]:bg-transparent [&_.ProseMirror_td]:px-2 [&_.ProseMirror_td]:py-1.5 [&_.ProseMirror_td]:text-left [&_.ProseMirror_td]:align-middle",
-  "[&_.ProseMirror_th]:h-8 [&_.ProseMirror_th]:border-0 [&_.ProseMirror_th]:border-r [&_.ProseMirror_th]:border-b [&_.ProseMirror_th]:border-border-soft [&_.ProseMirror_th]:bg-transparent [&_.ProseMirror_th]:px-2 [&_.ProseMirror_th]:py-1.5 [&_.ProseMirror_th]:text-left [&_.ProseMirror_th]:align-middle [&_.ProseMirror_th]:font-normal",
-  "[&_.ProseMirror_tr>*:last-child]:border-r-0 [&_.ProseMirror_tr:last-child>*]:border-b-0",
-  "[&_.ProseMirror_td_p]:text-base [&_.ProseMirror_td_p]:leading-[21px] [&_.ProseMirror_td_p]:text-secondary-foreground [&_.ProseMirror_th_p]:text-[13px] [&_.ProseMirror_th_p]:leading-[15px] [&_.ProseMirror_th_p]:text-muted-foreground",
-  "[&_.ProseMirror_.selectedCell]:bg-blue-50 dark:[&_.ProseMirror_.selectedCell]:bg-blue-900/30",
-  // a block picked up by its grip, or selected by a click on it: a
-  // gray-100 ground 4px past its edges
-  "[&_.ProseMirror_.ProseMirror-selectednode:not(img)]:rounded-[4px] [&_.ProseMirror_.ProseMirror-selectednode:not(img)]:bg-secondary [&_.ProseMirror_.ProseMirror-selectednode:not(img)]:shadow-[0_0_0_4px_var(--secondary)]",
-  // columns: side by side on a 24px gutter, a hairline between
-  "[&_.ProseMirror_div[data-type=columns]]:my-2 [&_.ProseMirror_div[data-type=columns]]:grid [&_.ProseMirror_div[data-type=columns]]:gap-6",
-  "[&_.ProseMirror_div[data-type=columns][data-count='2']]:grid-cols-2 [&_.ProseMirror_div[data-type=columns][data-count='3']]:grid-cols-3 [&_.ProseMirror_div[data-type=columns][data-count='4']]:grid-cols-4",
-  "[&_.ProseMirror_div[data-type=column]]:min-w-0 [&_.ProseMirror_div[data-type=column]]:border-l [&_.ProseMirror_div[data-type=column]]:border-border [&_.ProseMirror_div[data-type=column]]:pl-3 [&_.ProseMirror_div[data-type=column]:first-child]:border-l-0 [&_.ProseMirror_div[data-type=column]:first-child]:pl-0",
-  "[&_.ProseMirror_div[data-type=column]>*:first-child]:mt-0 [&_.ProseMirror_div[data-type=column]>*:last-child]:mb-0",
-  "max-sm:[&_.ProseMirror_div[data-type=columns]]:grid-cols-1! max-sm:[&_.ProseMirror_div[data-type=column]]:border-l-0 max-sm:[&_.ProseMirror_div[data-type=column]]:pl-0",
-  // attachments: a file chip a row each
-  "[&_.ProseMirror_a[data-attachment]]:my-2 [&_.ProseMirror_a[data-attachment]]:flex [&_.ProseMirror_a[data-attachment]]:w-fit [&_.ProseMirror_a[data-attachment]]:cursor-default [&_.ProseMirror_a[data-attachment]]:items-center [&_.ProseMirror_a[data-attachment]]:gap-2.5 [&_.ProseMirror_a[data-attachment]]:text-foreground [&_.ProseMirror_a[data-attachment]]:no-underline [&_.ProseMirror_a[data-attachment]]:before:size-4 [&_.ProseMirror_a[data-attachment]]:before:shrink-0 [&_.ProseMirror_a[data-attachment]]:before:bg-current [&_.ProseMirror_a[data-attachment]]:before:[mask-image:url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22black%22%20stroke-width=%222%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M15%202H6a2%202%200%200%200-2%202v16a2%202%200%200%200%202%202h12a2%202%200%200%200%202-2V7Z%22/%3E%3Cpath%20d=%22M14%202v4a2%202%200%200%200%202%202h4%22/%3E%3C/svg%3E')] [&_.ProseMirror_a[data-attachment]]:before:[mask-size:contain] [&_.ProseMirror_a[data-attachment]]:before:[mask-repeat:no-repeat] [&_.ProseMirror_a[data-attachment]]:before:content-['']",
-  "[&_.ProseMirror_a[data-attachment].ProseMirror-selectednode]:rounded-md [&_.ProseMirror_a[data-attachment].ProseMirror-selectednode]:bg-secondary",
-  // a callout: gray wash, 12px in, the emoji leading its first line
-  "[&_.ProseMirror_div[data-type=callout]]:relative [&_.ProseMirror_div[data-type=callout]]:my-2 [&_.ProseMirror_div[data-type=callout]]:rounded-lg [&_.ProseMirror_div[data-type=callout]]:bg-input [&_.ProseMirror_div[data-type=callout]]:p-3 [&_.ProseMirror_div[data-type=callout]]:pl-11 [&_.ProseMirror_div[data-type=callout]]:before:absolute [&_.ProseMirror_div[data-type=callout]]:before:top-3 [&_.ProseMirror_div[data-type=callout]]:before:left-3 [&_.ProseMirror_div[data-type=callout]]:before:content-[attr(data-emoji)]",
-  // a mention: gray chip, as the file marks a person
-  "[&_.ProseMirror_.mention]:rounded-[4px] [&_.ProseMirror_.mention]:bg-secondary [&_.ProseMirror_.mention]:px-[3px] [&_.ProseMirror_.mention]:text-foreground",
-  // audio and embeds
-  "[&_.ProseMirror_video]:my-2 [&_.ProseMirror_video]:w-full [&_.ProseMirror_video]:rounded-lg [&_.ProseMirror_audio]:my-2 [&_.ProseMirror_audio]:w-full [&_.ProseMirror_div[data-type=embed]]:my-2 [&_.ProseMirror_div[data-type=embed]_iframe]:aspect-video [&_.ProseMirror_div[data-type=embed]_iframe]:w-full [&_.ProseMirror_div[data-type=embed]_iframe]:rounded-lg [&_.ProseMirror_div[data-type=embed]_iframe]:border [&_.ProseMirror_div[data-type=embed]_iframe]:border-border-soft",
-  // expand/collapse: the summary row with its turning chevron
-  "[&_.ProseMirror_[data-type=details]]:my-1 [&_.ProseMirror_[data-type=details]]:flex [&_.ProseMirror_[data-type=details]]:gap-1 [&_.ProseMirror_[data-type=details]>button]:mt-1 [&_.ProseMirror_[data-type=details]>button]:flex [&_.ProseMirror_[data-type=details]>button]:size-5 [&_.ProseMirror_[data-type=details]>button]:shrink-0 [&_.ProseMirror_[data-type=details]>button]:cursor-pointer [&_.ProseMirror_[data-type=details]>button]:items-center [&_.ProseMirror_[data-type=details]>button]:justify-center [&_.ProseMirror_[data-type=details]>button]:rounded-sm [&_.ProseMirror_[data-type=details]>button]:text-muted-foreground [&_.ProseMirror_[data-type=details]>button:hover]:bg-secondary [&_.ProseMirror_[data-type=details]>button]:before:transition-transform [&_.ProseMirror_[data-type=details]>button]:before:content-['▸'] [&_.ProseMirror_[data-type=details][open]>button]:before:rotate-90",
-  "[&_.ProseMirror_[data-type=details]>div]:min-w-0 [&_.ProseMirror_[data-type=details]>div]:flex-1 [&_.ProseMirror_[data-type=details]_summary]:cursor-pointer [&_.ProseMirror_[data-type=details]_summary]:list-none [&_.ProseMirror_[data-type=details]_summary]:font-medium [&_.ProseMirror_[data-type=details]_summary]:text-foreground [&_.ProseMirror_[data-type=details]_summary::-webkit-details-marker]:hidden"
+  "[&_.ProseMirror_ul[data-type=taskList]]:pl-0 [&_.ProseMirror_ul[data-type=taskList]_li]:flex [&_.ProseMirror_ul[data-type=taskList]_li]:items-start [&_.ProseMirror_ul[data-type=taskList]_li]:gap-2 [&_.ProseMirror_ul[data-type=taskList]_li]:pl-[0.375em] [&_.ProseMirror_ul[data-type=taskList]_li>label]:relative [&_.ProseMirror_ul[data-type=taskList]_li>label]:mt-1 [&_.ProseMirror_ul[data-type=taskList]_li>label]:flex [&_.ProseMirror_ul[data-type=taskList]_li>label]:h-[1lh] [&_.ProseMirror_ul[data-type=taskList]_li>label]:shrink-0 [&_.ProseMirror_ul[data-type=taskList]_li>label]:items-center [&_.ProseMirror_ul[data-type=taskList]_li>div>p]:my-1 [&_.ProseMirror_ul[data-type=taskList]_li>div]:min-w-0 [&_.ProseMirror_ul[data-type=taskList]_li>div]:flex-1",
+  "[&_.ProseMirror_ul[data-type=taskList]_input]:size-4 [&_.ProseMirror_ul[data-type=taskList]_input]:cursor-pointer [&_.ProseMirror_ul[data-type=taskList]_input]:appearance-none [&_.ProseMirror_ul[data-type=taskList]_input]:rounded-2xs [&_.ProseMirror_ul[data-type=taskList]_input]:border [&_.ProseMirror_ul[data-type=taskList]_input]:border-card-foreground [&_.ProseMirror_ul[data-type=taskList]_input]:bg-background [&_.ProseMirror_ul[data-type=taskList]_input]:transition-all [&_.ProseMirror_ul[data-type=taskList]_input]:duration-[250ms] [&_.ProseMirror_ul[data-type=taskList]_input]:ease-[ease] [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:border-accent-foreground [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:shadow-elevation-sm [&_.ProseMirror_ul[data-type=taskList]_input:active]:scale-[0.97]",
+  "[&_.ProseMirror_ul[data-type=taskList]_input:checked]:border-transparent [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-primary [&_.ProseMirror_ul[data-type=taskList]_input:checked:hover]:bg-primary/86",
+  // an embed: its frame in the platform's shape
+  "[&_.ProseMirror_div[data-type=embed]]:my-2 [&_.ProseMirror_div[data-type=embed]_iframe]:aspect-video [&_.ProseMirror_div[data-type=embed]_iframe]:w-full [&_.ProseMirror_div[data-type=embed]_iframe]:rounded-lg [&_.ProseMirror_div[data-type=embed]_iframe]:border [&_.ProseMirror_div[data-type=embed]_iframe]:border-border-soft",
+  "[&_.ProseMirror_video]:my-2 [&_.ProseMirror_video]:w-full [&_.ProseMirror_video]:rounded-lg"
 )
+
+export interface CommentReply {
+  who: string
+  image?: string
+  when: string
+  text: string
+}
+export interface CommentThread {
+  id: string
+  replies: CommentReply[]
+}
 
 export interface RichTextEditorProps {
   /** what it opens with */
@@ -1255,15 +1518,104 @@ export interface RichTextEditorProps {
   placeholder?: string
   className?: string
   onChange?: (html: string) => void
+  /** the threads the document opens with, one per amber comment run */
+  initialComments?: CommentThread[]
+  /** who a sent reply is from */
+  commenter?: { who: string; image?: string }
 }
 
 export function RichTextEditor({
   content = "",
   editable = true,
-  placeholder = "Type something, or press + for commands...",
+  placeholder = "Type / for blocks, @ to mention...",
   className,
   onChange,
+  initialComments,
+  commenter,
 }: RichTextEditorProps) {
+  // ---- comments: a thread per amber run, shown beside the selection
+  const [threads, setThreads] = React.useState<CommentThread[]>(
+    () => initialComments ?? []
+  )
+  const [openThread, setOpenThread] = React.useState<string | null>(null)
+  const [threadTop, setThreadTop] = React.useState(0)
+  const [reply, setReply] = React.useState("")
+  const stageRef = React.useRef<HTMLDivElement>(null)
+  const editorRef = React.useRef<TiptapEditor | null>(null)
+
+  const show = React.useCallback((id: string) => {
+    setOpenThread(id)
+    requestAnimationFrame(() => {
+      const stage = stageRef.current
+      const el = stage?.querySelector<HTMLElement>(`[data-comment="${id}"]`)
+      const box = stage?.getBoundingClientRect()
+      if (el && box)
+        setThreadTop(el.getBoundingClientRect().top - box.top)
+    })
+  }, [])
+  const comment = React.useCallback(() => {
+    const ed = editorRef.current
+    if (!ed) return
+    const existing = ed.getAttributes("comment").id as string | undefined
+    if (existing) {
+      show(existing)
+      return
+    }
+    if (ed.state.selection.empty) return
+    const id = `c${Date.now()}`
+    ed.chain().focus().setComment(id).run()
+    setThreads((t) => [...t, { id, replies: [] }])
+    show(id)
+  }, [show])
+  const onEditorClick = (e: React.MouseEvent) => {
+    const run = (e.target as HTMLElement).closest<HTMLElement>(
+      "[data-comment]"
+    )
+    if (run && run.dataset.comment) show(run.dataset.comment)
+    else setOpenThread(null)
+  }
+  const current = threads.find((t) => t.id === openThread)
+  const send = () => {
+    const text = reply.trim()
+    if (!current || !text) return
+    setThreads((all) =>
+      all.map((t) =>
+        t.id === current.id
+          ? {
+              ...t,
+              replies: [
+                ...t.replies,
+                {
+                  who: commenter?.who ?? "You",
+                  image: commenter?.image,
+                  when: "now",
+                  text,
+                },
+              ],
+            }
+          : t
+      )
+    )
+    setReply("")
+  }
+  const resolve = () => {
+    const ed = editorRef.current
+    if (!current || !ed) return
+    // the run goes with the thread
+    ed.state.doc.descendants((node, pos) => {
+      const mark = node.marks.find(
+        (m) => m.type.name === "comment" && m.attrs.id === current.id
+      )
+      if (mark)
+        ed.chain()
+          .setTextSelection({ from: pos, to: pos + node.nodeSize })
+          .unsetComment()
+          .run()
+    })
+    setThreads((all) => all.filter((x) => x.id !== current.id))
+    setOpenThread(null)
+  }
+
   return (
     <EditorProvider
       extensions={[RichTextKit.configure({ placeholder: { placeholder } })]}
@@ -1272,48 +1624,193 @@ export function RichTextEditor({
       onUpdate={onChange}
       deps={[placeholder]}
     >
-      {(editor) => (
-        <div
-          data-slot="rich-text-editor"
-          {...(!editable && { "data-readonly": "" })}
-          className={cn(
-            "flex min-h-0 w-fit max-w-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border-soft bg-background",
-            className
-          )}
-        >
-          {editor && editable && <RichTextToolbar editor={editor} />}
-          {editor && editable && <BlockHandle editor={editor} />}
-          {editor && editable && <TableControls editor={editor} />}
-          {editor && editable && <LinkClickPopup editor={editor} />}
-          {editor && editable && (
-            <BubbleMenu
-              editor={editor}
-              options={{ placement: "top", offset: 10 }}
-              shouldShow={({ editor: ed, state, from, to }) => {
-                const { selection } = state
-                if (selection.empty || "node" in selection || !ed.isEditable)
-                  return false
-                // a selected row, column or run of cells has the table's
-                // own menus
-                if ("$anchorCell" in selection) return false
-                return state.doc.textBetween(from, to).length > 0
-              }}
-              className="z-60"
-            >
-              <SelectionBar editor={editor} />
-            </BubbleMenu>
-          )}
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <EditorContent
-              editor={editor}
-              className={cn(
-                "mx-auto w-full max-w-[700px] px-4 py-8 sm:px-0",
-                docClassName
-              )}
-            />
+      {(editor) => {
+        editorRef.current = editor
+        return (
+          <div
+            ref={stageRef}
+            data-slot="rich-text-editor"
+            {...(!editable && { "data-readonly": "" })}
+            className={cn(
+              "rte relative flex min-h-0 w-full max-w-[1300px] min-w-0 flex-col overflow-hidden rounded-2xl border border-border-soft bg-background",
+              !editable && "is-readonly",
+              className
+            )}
+          >
+            <EditorStyles />
+            {editor && editable && (
+              <RichTextToolbar editor={editor} onComment={comment} />
+            )}
+            {editor && editable && <BlockHandle editor={editor} />}
+            {editor && editable && <TableControls editor={editor} />}
+            {editor && editable && <ColumnResizer editor={editor} />}
+            {editor && editable && <LinkClickCard editor={editor} />}
+            {editor && editable && (
+              <BubbleMenu
+                editor={editor}
+                options={{ placement: "top" }}
+                getReferencedVirtualElement={() => selectionBox(editor)}
+                shouldShow={({ editor: ed, state, from, to }) => {
+                  const { selection } = state
+                  if (selection.empty || "node" in selection || !ed.isEditable)
+                    return false
+                  // a selected row, column or run of cells has the table's
+                  // own menus
+                  if ("$anchorCell" in selection) return false
+                  return state.doc.textBetween(from, to).length > 0
+                }}
+                className="z-60"
+              >
+                <SelectionBar editor={editor} />
+              </BubbleMenu>
+            )}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <div className="px-4 py-8 sm:px-8" onClick={onEditorClick}>
+                <EditorContent
+                  editor={editor}
+                  className={cn(
+                    "rte-doc mx-auto w-full max-w-[700px]",
+                    docClassName
+                  )}
+                />
+              </div>
+            </div>
+
+            {/* the thread beside the run: the file's comment card —
+                300px on a 12px radius under the xl shadow, a 32px header
+                ruled beneath, a reply per 24px avatar, the reply field */}
+            {current && (
+              <div
+                className="rte-thread absolute right-6 z-20 flex w-[300px] flex-col gap-3.5 rounded-xl bg-card pb-2.5 shadow-elevation-xl dark:[--background:var(--card)]"
+                style={{ top: Math.max(48, threadTop - 8) }}
+                role="dialog"
+                aria-label="Comment thread"
+              >
+                {/* 32px: 10 in, the title, three 24px controls, 4 out */}
+                <div className="rte-thread-head flex h-8 items-center py-1 pr-1 pl-2.5">
+                  <span className="flex-1 text-sm leading-4 font-medium text-accent-foreground">
+                    Comment
+                  </span>
+                  <button
+                    type="button"
+                    className="rte-thread-btn"
+                    aria-label="More"
+                    title="More"
+                  >
+                    <DotHorizontalIcon className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="rte-thread-btn"
+                    aria-label="Resolve"
+                    title="Resolve"
+                    onClick={resolve}
+                  >
+                    <CheckCircleIcon className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="rte-thread-btn"
+                    aria-label="Close"
+                    title="Close"
+                    onClick={() => setOpenThread(null)}
+                  >
+                    <CloseIcon className="size-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2.5 px-2.5">
+                  <div className="flex flex-col gap-3.5">
+                    {/* a reply: the avatar, 8, name · when over the text */}
+                    {current.replies.map((r, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        {r.image ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={r.image}
+                            alt=""
+                            className="size-6 shrink-0 rounded-full object-cover"
+                          />
+                        ) : (
+                          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-medium text-secondary-foreground">
+                            {r.who.charAt(0)}
+                          </span>
+                        )}
+                        <div className="flex min-w-0 flex-1 flex-col gap-1">
+                          <p className="flex items-baseline gap-1">
+                            <span className="truncate text-sm leading-4 font-medium text-secondary-foreground">
+                              {r.who}
+                            </span>
+                            <span className="shrink-0 text-sm leading-[15px] text-accent-foreground">
+                              · {r.when}
+                            </span>
+                          </p>
+                          <p className="text-base text-muted-foreground">
+                            {r.text}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          className="flex size-4 shrink-0 items-center justify-center text-accent-foreground"
+                          aria-label="More"
+                          title="More"
+                        >
+                          <DotHorizontalIcon className="size-4" />
+                        </button>
+                      </div>
+                    ))}
+                    {!current.replies.length && (
+                      <p className="text-base text-accent-foreground">
+                        Start the thread.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* the reply field: 24px avatar, 8, the subtle input */}
+                  <form
+                    className="flex items-center gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      send()
+                    }}
+                  >
+                    {commenter?.image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={commenter.image}
+                        alt=""
+                        className="size-6 shrink-0 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-secondary text-[10px] font-medium text-secondary-foreground">
+                        {(commenter?.who ?? "You").charAt(0)}
+                      </span>
+                    )}
+                    <div className="relative min-w-0 flex-1">
+                      <Input
+                        size="sm"
+                        variant="subtle"
+                        className="w-full pr-7"
+                        placeholder="Reply"
+                        aria-label="Reply"
+                        value={reply}
+                        onChange={(e) => setReply(e.target.value)}
+                      />
+                      <button
+                        type="submit"
+                        className="absolute top-1/2 right-1.5 flex size-4 -translate-y-1/2 items-center justify-center text-secondary-foreground"
+                        aria-label="Send"
+                      >
+                        <ArrowUpIcon className="size-4" />
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )
+      }}
     </EditorProvider>
   )
 }
