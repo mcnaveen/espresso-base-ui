@@ -11,6 +11,7 @@
 import * as React from "react"
 import { createRoot } from "react-dom/client"
 import { Extension, getMarkRange, type Editor as TiptapEditor } from "@tiptap/core"
+import { Plugin, PluginKey } from "@tiptap/pm/state"
 
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -19,6 +20,8 @@ import {
   GlobeIcon,
   LinkBrokenIcon,
 } from "@/components/ui/rich-text-editor-icons"
+
+import { LINK_ON_KEY } from "./extensions"
 
 const ALLOWED = /^(https?|mailto|tel):/i
 
@@ -120,10 +123,18 @@ export function LinkCard({
           ref={inputRef}
           size="sm"
           variant="subtle"
-          className="w-full pl-8"
+          className={cn(
+            "w-full pl-8",
+            !edit && "cursor-pointer hover:underline"
+          )}
           placeholder="Paste or type a link"
           readOnly={!edit}
-          aria-label="Link address"
+          aria-label={edit ? "Link address" : "Open link"}
+          title={edit ? undefined : "Open link"}
+          onClick={() => {
+            // read, the address is the way to the page
+            if (!edit && href) window.open(href, "_blank", "noopener,noreferrer")
+          }}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
@@ -200,9 +211,14 @@ function openLinkPopup(args: {
     document.body.appendChild(host)
     const root = createRoot(host)
 
+    const ground = (on: boolean) => {
+      if (editor.isDestroyed) return
+      editor.view.dispatch(editor.state.tr.setMeta(LINK_ON_KEY, on))
+    }
     const settle = (value: string | null) => {
       if (settled) return
       settled = true
+      ground(false)
       document.removeEventListener("pointerdown", onDown, true)
       window.removeEventListener("scroll", position, true)
       window.removeEventListener("resize", position)
@@ -230,6 +246,7 @@ function openLinkPopup(args: {
     document.addEventListener("pointerdown", onDown, true)
     window.addEventListener("scroll", position, true)
     window.addEventListener("resize", position)
+    ground(true)
 
     root.render(
       <LinkCard
@@ -336,34 +353,38 @@ export const LinkEditor = Extension.create({
   },
 })
 
-/** the card over a clicked link: read first, as the file draws it */
+/**
+ * A click on a link goes to its page, in a new tab. Taken through the
+ * editor's own click handling (ProseMirror calls it on a real click, no
+ * drag) rather than the raw DOM click, which a contenteditable can swallow.
+ * Read-only, the browser follows the link itself. The card is still a
+ * Link button or ⌘K away for changing the address.
+ */
 export function LinkClickCard({ editor }: { editor: TiptapEditor }) {
   React.useEffect(() => {
-    const dom = editor.view.dom
-    const onClick = (event: MouseEvent) => {
-      if (!editor.isEditable) return
-      const target = event.target instanceof Element ? event.target : null
-      const link = target?.closest?.("a[href]:not([data-attachment])")
-      if (!link || !dom.contains(link)) return
-      event.preventDefault()
-      let pos: number | null = null
-      try {
-        pos = editor.view.posAtDOM(link, 0)
-      } catch {
-        pos = null
-      }
-      if (pos === null) return
-      const $pos = editor.state.doc.resolve(pos + 1)
-      const markType = editor.state.schema.marks.link
-      const range = getMarkRange($pos, markType)
-      if (!range) return
-      editor.chain().setTextSelection(range).run()
-      requestAnimationFrame(() =>
-        editor.commands.openLinkEditor({ startInEdit: false })
-      )
+    if (editor.isDestroyed) return
+    const key = new PluginKey("rteLinkClick")
+    editor.registerPlugin(
+      new Plugin({
+        key,
+        props: {
+          handleClick(view, _pos, event) {
+            if (!view.editable || event.button !== 0) return false
+            const target = event.target instanceof Element ? event.target : null
+            const link = target?.closest?.("a[href]:not([data-attachment])")
+            if (!link || !view.dom.contains(link)) return false
+            const href = link.getAttribute("href")
+            if (!href) return false
+            event.preventDefault()
+            window.open(href, "_blank", "noopener,noreferrer")
+            return true
+          },
+        },
+      })
+    )
+    return () => {
+      if (!editor.isDestroyed) editor.unregisterPlugin(key)
     }
-    dom.addEventListener("click", onClick)
-    return () => dom.removeEventListener("click", onClick)
   }, [editor])
   return null
 }

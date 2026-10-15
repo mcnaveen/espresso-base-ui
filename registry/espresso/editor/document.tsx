@@ -120,6 +120,60 @@ import {
  * A text swatch is white with the A in the colour; a background swatch is
  * the colour's wash. Default unsets.
  */
+/**
+ * The size the caret's block is drawn at with no size of its own: the
+ * document's 15px body, a heading's own size. The stepper counts from it,
+ * so its first step is a step the eye can see.
+ */
+function baseSizeAt(ed: TiptapEditor): number {
+  try {
+    const { $from } = ed.state.selection
+    if ($from.depth > 0) {
+      const dom = ed.view.nodeDOM($from.before($from.depth))
+      if (dom instanceof HTMLElement) {
+        const n = parseFloat(getComputedStyle(dom).fontSize)
+        if (Number.isFinite(n) && n > 0) return Math.round(n)
+      }
+    }
+  } catch {
+    // the view is not drawn yet
+  }
+  return DEFAULT_SIZE
+}
+
+/**
+ * The floating bar's anchor: the whole run of selected text, every line of
+ * it, so the bar stands centred over the text. Tiptap's own anchor spans
+ * the selection's two ends, which on a paragraph with a short last line
+ * pulls the bar off to the left and moves it whenever the lines re-wrap
+ * (a size stepped, a font changed).
+ */
+function selectionBox(ed: TiptapEditor) {
+  // measured afresh each time the bar asks, so it follows scrolling and
+  // re-wrapping lines
+  const measure = (): DOMRect | null => {
+    try {
+      const { from, to } = ed.state.selection
+      const start = ed.view.domAtPos(from)
+      const end = ed.view.domAtPos(to)
+      const range = document.createRange()
+      range.setStart(start.node, start.offset)
+      range.setEnd(end.node, end.offset)
+      const rect = range.getBoundingClientRect()
+      return rect.width || rect.height ? rect : null
+    } catch {
+      return null
+    }
+  }
+  const first = measure()
+  if (!first) return null
+  let last = first
+  return {
+    getBoundingClientRect: () => (last = measure() ?? last),
+    getClientRects: () => [measure() ?? last],
+  }
+}
+
 function ColorPanel({
   editor,
   onPick,
@@ -148,9 +202,16 @@ function ColorPanel({
       : undefined
   const label = (name: string | null) =>
     name ? name.charAt(0).toUpperCase() + name.slice(1) : "Default"
+  // a colour set leaves the caret at the run's end, not the run selected:
+  // the selection's wash would otherwise stand over the colour just chosen
+  const settle = () => {
+    const { to, empty } = editor.state.selection
+    if (!empty) editor.chain().focus().setTextSelection(to).run()
+  }
   const pickText = (name: string | null) => {
     const chain = editor.chain().focus()
     ;(name ? chain.setColor(textValue(name)) : chain.unsetColor()).run()
+    settle()
     onPick()
   }
   const pickHighlight = (name: string | null) => {
@@ -159,6 +220,7 @@ function ColorPanel({
       ? chain.setHighlight({ color: highlightValue(name) })
       : chain.unsetHighlight()
     ).run()
+    settle()
     onPick()
   }
   return (
@@ -321,12 +383,13 @@ function RichTextToolbar({
       font:
         FONTS.find((f) => f.value === ed.getAttributes("textStyle").fontFamily)
           ?.label ?? "Inter",
+      base: baseSizeAt(ed),
       size: (() => {
         const raw = ed.getAttributes("textStyle").fontSize as
           | string
           | undefined
         const n = raw ? parseInt(raw, 10) : NaN
-        return Number.isFinite(n) ? n : DEFAULT_SIZE
+        return Number.isFinite(n) ? n : baseSizeAt(ed)
       })(),
       spacing:
         (ed.getAttributes("textStyle").lineHeight as string | undefined) ??
@@ -469,6 +532,15 @@ function RichTextToolbar({
         aria-disabled={disabled || undefined}
         data-slot="rich-text-editor-toolbar"
         className="rte-toolbar sticky top-0 z-10 flex h-9 shrink-0 items-center overflow-x-auto overflow-y-hidden border-b border-border-soft bg-background px-1"
+        // a press on the bar leaves the focus in the document: the selection
+        // stays live, so the floating bar over it neither hides nor jumps
+        // while a size is stepped or a mark set. A field keeps its focus.
+        onMouseDown={(event) => {
+          const target = event.target as HTMLElement
+          if (target.closest("input, textarea, select, [contenteditable='true']"))
+            return
+          event.preventDefault()
+        }}
       >
         {/* + insert */}
         <DropdownMenu>
@@ -655,7 +727,7 @@ function RichTextToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* size: − 14 + */}
+        {/* size: − 15 + (the block's own size until one is set) */}
         <div
           className="flex h-7 shrink-0 items-center gap-1 p-0.5"
           aria-label="Font size"
@@ -671,7 +743,9 @@ function RichTextToolbar({
                   72,
                   Math.max(8, (active?.size ?? DEFAULT_SIZE) - 1)
                 )
-                if (next === DEFAULT_SIZE) chain().unsetFontSize().run()
+                // back at the block's own size: no size of its own to keep
+                if (next === (active?.base ?? DEFAULT_SIZE))
+                  chain().unsetFontSize().run()
                 else chain().setFontSize(`${next}px`).run()
               }}
             >
@@ -692,7 +766,9 @@ function RichTextToolbar({
                   72,
                   Math.max(8, (active?.size ?? DEFAULT_SIZE) + 1)
                 )
-                if (next === DEFAULT_SIZE) chain().unsetFontSize().run()
+                // back at the block's own size: no size of its own to keep
+                if (next === (active?.base ?? DEFAULT_SIZE))
+                  chain().unsetFontSize().run()
                 else chain().setFontSize(`${next}px`).run()
               }}
             >
@@ -761,11 +837,12 @@ function RichTextToolbar({
               () => chain().setHorizontalRule(),
             ],
           ] as const
-        ).map(([label, Icon, pressed, run]) => (
+        ).map(([label, Icon, pressed, run], i) => (
           <BarTooltip key={label} label={label}>
             <button
               type="button"
-              className="rte-btn"
+              // 1px apart, so two pressed grounds side by side stay two
+              className={cn("rte-btn", i > 0 && "ml-px")}
               aria-pressed={pressed || undefined}
               aria-label={label}
               disabled={disabled}
@@ -1415,10 +1492,9 @@ const docClassName = cn(
   "[&_.ProseMirror_img]:max-w-full [&_.ProseMirror_img]:rounded-lg",
   "[&_.ProseMirror_iframe]:my-2 [&_.ProseMirror_iframe]:aspect-video [&_.ProseMirror_iframe]:w-full [&_.ProseMirror_iframe]:rounded-lg",
   // the to-do list drawn with the espresso Checkbox's own look
-  "[&_.ProseMirror_ul[data-type=taskList]]:pl-0 [&_.ProseMirror_ul[data-type=taskList]_li]:flex [&_.ProseMirror_ul[data-type=taskList]_li]:items-start [&_.ProseMirror_ul[data-type=taskList]_li]:gap-2 [&_.ProseMirror_ul[data-type=taskList]_li>label]:mt-1 [&_.ProseMirror_ul[data-type=taskList]_li>div]:min-w-0 [&_.ProseMirror_ul[data-type=taskList]_li>div]:flex-1",
-  "[&_.ProseMirror_ul[data-type=taskList]_input]:size-4 [&_.ProseMirror_ul[data-type=taskList]_input]:cursor-pointer [&_.ProseMirror_ul[data-type=taskList]_input]:appearance-none [&_.ProseMirror_ul[data-type=taskList]_input]:rounded-2xs [&_.ProseMirror_ul[data-type=taskList]_input]:border [&_.ProseMirror_ul[data-type=taskList]_input]:border-card-foreground [&_.ProseMirror_ul[data-type=taskList]_input]:bg-background [&_.ProseMirror_ul[data-type=taskList]_input]:transition-all [&_.ProseMirror_ul[data-type=taskList]_input]:duration-[250ms] [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:border-accent-foreground [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:shadow-elevation-sm [&_.ProseMirror_ul[data-type=taskList]_input:active]:scale-[0.97]",
-  "[&_.ProseMirror_ul[data-type=taskList]_input:checked]:border-transparent [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-primary [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22%23FFFFFF%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M20%206%209%2017l-5-5%22/%3E%3C/svg%3E')] [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-size-[12px] [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-center [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-no-repeat [&_.ProseMirror_ul[data-type=taskList]_input:checked:hover]:bg-primary/86",
-  "dark:[&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-[url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22%23171717%22%20stroke-width=%223.5%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Cpath%20d=%22M20%206%209%2017l-5-5%22/%3E%3C/svg%3E')]",
+  "[&_.ProseMirror_ul[data-type=taskList]]:pl-0 [&_.ProseMirror_ul[data-type=taskList]_li]:flex [&_.ProseMirror_ul[data-type=taskList]_li]:items-start [&_.ProseMirror_ul[data-type=taskList]_li]:gap-2 [&_.ProseMirror_ul[data-type=taskList]_li]:pl-[0.375em] [&_.ProseMirror_ul[data-type=taskList]_li>label]:relative [&_.ProseMirror_ul[data-type=taskList]_li>label]:mt-1 [&_.ProseMirror_ul[data-type=taskList]_li>label]:flex [&_.ProseMirror_ul[data-type=taskList]_li>label]:h-[1lh] [&_.ProseMirror_ul[data-type=taskList]_li>label]:shrink-0 [&_.ProseMirror_ul[data-type=taskList]_li>label]:items-center [&_.ProseMirror_ul[data-type=taskList]_li>div>p]:my-1 [&_.ProseMirror_ul[data-type=taskList]_li>div]:min-w-0 [&_.ProseMirror_ul[data-type=taskList]_li>div]:flex-1",
+  "[&_.ProseMirror_ul[data-type=taskList]_input]:size-4 [&_.ProseMirror_ul[data-type=taskList]_input]:cursor-pointer [&_.ProseMirror_ul[data-type=taskList]_input]:appearance-none [&_.ProseMirror_ul[data-type=taskList]_input]:rounded-2xs [&_.ProseMirror_ul[data-type=taskList]_input]:border [&_.ProseMirror_ul[data-type=taskList]_input]:border-card-foreground [&_.ProseMirror_ul[data-type=taskList]_input]:bg-background [&_.ProseMirror_ul[data-type=taskList]_input]:transition-all [&_.ProseMirror_ul[data-type=taskList]_input]:duration-[250ms] [&_.ProseMirror_ul[data-type=taskList]_input]:ease-[ease] [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:border-accent-foreground [&_.ProseMirror_ul[data-type=taskList]_input:not(:checked):hover]:shadow-elevation-sm [&_.ProseMirror_ul[data-type=taskList]_input:active]:scale-[0.97]",
+  "[&_.ProseMirror_ul[data-type=taskList]_input:checked]:border-transparent [&_.ProseMirror_ul[data-type=taskList]_input:checked]:bg-primary [&_.ProseMirror_ul[data-type=taskList]_input:checked:hover]:bg-primary/86",
   // an embed: its frame in the platform's shape
   "[&_.ProseMirror_div[data-type=embed]]:my-2 [&_.ProseMirror_div[data-type=embed]_iframe]:aspect-video [&_.ProseMirror_div[data-type=embed]_iframe]:w-full [&_.ProseMirror_div[data-type=embed]_iframe]:rounded-lg [&_.ProseMirror_div[data-type=embed]_iframe]:border [&_.ProseMirror_div[data-type=embed]_iframe]:border-border-soft",
   "[&_.ProseMirror_video]:my-2 [&_.ProseMirror_video]:w-full [&_.ProseMirror_video]:rounded-lg"
@@ -1573,6 +1649,7 @@ export function RichTextEditor({
               <BubbleMenu
                 editor={editor}
                 options={{ placement: "top" }}
+                getReferencedVirtualElement={() => selectionBox(editor)}
                 shouldShow={({ editor: ed, state, from, to }) => {
                   const { selection } = state
                   if (selection.empty || "node" in selection || !ed.isEditable)

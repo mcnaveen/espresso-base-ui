@@ -24,6 +24,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { DragIcon } from "@/components/ui/rich-text-editor-icons"
+import { pressHandlers } from "./press"
 import { type View } from "./extensions"
 
 /** how far left of the document the grip still answers the pointer */
@@ -54,6 +55,9 @@ const SIDE_INSET = 6
 const inCell = (el: Element) =>
   el.parentElement?.matches('[data-type="column"]') === true &&
   el.closest(MEDIA_ROW) !== null
+/** a block (or list item) anywhere inside a column of a row of prose */
+const inTextColumn = (el: Element) =>
+  el.closest('[data-type="column"]') !== null && el.closest(MEDIA_ROW) === null
 /**
  * A picture carried from one cell of a row onto another cell's picture
  * changes places with it; onto an empty slot, or anywhere else, it lands
@@ -106,12 +110,19 @@ function blockAt(
         x >= c.getBoundingClientRect().left &&
         x < c.getBoundingClientRect().right
     )
-    const inner = cell
-      ? [...cell.children].find(
-          (c): c is HTMLElement =>
-            c instanceof HTMLElement && !c.matches(SKIP) && spans(c, y)
+    const blocks = cell
+      ? [...cell.children].filter(
+          (c): c is HTMLElement => c instanceof HTMLElement && !c.matches(SKIP)
         )
-      : undefined
+      : []
+    let inner = blocks.find((c) => spans(c, y))
+    // a drop in a short column's empty space below its blocks lands by its
+    // last block, not on the whole row (hovering there still offers the
+    // row's own grip, the one that carries the row)
+    if (!inner && loose && blocks.length) {
+      const last = blocks[blocks.length - 1]
+      if (y >= last.getBoundingClientRect().bottom) inner = last
+    }
     if (inner) block = inner
   }
   while (block.matches("ul, ol")) {
@@ -185,7 +196,11 @@ function leaveBehind(
     tr.delete(at, at + size)
     return
   }
-  const rowAt = tr.mapping.map(cell.row, -1)
+  // past whatever was set down right before the row: a block dropped on
+  // the row's own top edge is inserted at the row's position, and mapping
+  // back to that spot would find the block, not the row, and leave the
+  // block's original standing (a copy instead of a move)
+  const rowAt = tr.mapping.map(cell.row, 1)
   const row = tr.doc.nodeAt(rowAt)
   const cellPos = tr.mapping.map(cell.pos)
   const gone = tr.doc.nodeAt(cellPos)
@@ -271,6 +286,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   const [target, setTarget] = React.useState<HTMLElement | null>(null)
   const [point, setPoint] = React.useState({ left: 0, top: 0 })
   const [onMedia, setOnMedia] = React.useState(false)
+  const [onText, setOnText] = React.useState(false)
   const layerRef = React.useRef<HTMLDivElement>(null)
   const targetRef = React.useRef<HTMLElement | null>(null)
   // not state: a re-render of the grip while it is the source of a drag
@@ -358,6 +374,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     }
     const media = inCell(el)
     setOnMedia(media)
+    setOnText(false)
     // a cell's block has no margin of its own to stand the grip in: it
     // sits on the picture, in its top-left corner, as the media's chrome
     if (media) {
@@ -376,6 +393,14 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const edge = el.matches("li")
       ? (el.parentElement?.getBoundingClientRect().left ?? r.left)
       : r.left
+    // a block in a text row's column carries its grip as a picture in a
+    // picture row does: over its own top-left corner, on its first line,
+    // so the page's margin is the whole row's alone
+    if (inTextColumn(el)) {
+      setOnText(true)
+      setPoint({ top, left: edge })
+      return
+    }
     // narrowed, it keeps its dots where the square grip had them
     setPoint({ top, left: edge - GAP - (SIZE + WIDTH) / 2 })
   }, [selectingText])
@@ -383,7 +408,11 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   React.useEffect(() => {
     const onMove = (event: MouseEvent) => {
       const d = drag.current
-      if (d.dragging || d.pressed) return
+      // a held button keeps the grip where it is: the press may be on its
+      // way to a drag, and Safari can skip the pointerdown that would
+      // have marked it pressed (after a drop), so the pointer leaving the
+      // grip as the drag sets out would otherwise hand it another block
+      if (d.dragging || d.pressed || event.buttons !== 0) return
       if (editor.isDestroyed || !editor.isEditable || selectingText()) {
         targetRef.current = null
         setTarget(null)
@@ -514,6 +543,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
 
   const finishDrag = React.useCallback(() => {
     const d = drag.current
+    gripRef.current?.classList.remove("is-dragging")
     d.pressed = false
     if (d.source?.run) carried(d.source.run.doms, false)
     d.dragging = false
@@ -533,6 +563,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     }
   }, [editor, carried])
 
+  const gripRef = React.useRef<HTMLButtonElement | null>(null)
   const onDragOverRef = React.useRef<(e: DragEvent) => void>(() => {})
   const onDropRef = React.useRef<(e: DragEvent) => void>(() => {})
 
@@ -592,7 +623,11 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     event.stopPropagation()
     const at = landingAt(event.clientX, event.clientY) ?? d.landing
     const from = d.source
+    // a drop is the drag's end: Safari can drop and never send the
+    // source its dragend, which would leave the grip hidden and stale
     finishDrag()
+    targetRef.current = null
+    setTarget(null)
     if (editor.isDestroyed || !at || !from) return
     const { state } = editor.view
     const node = state.doc.nodeAt(from.pos)
@@ -663,15 +698,20 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     editor.view.focus()
   }
 
-  // the browser's own snapshot is replaced by nothing: the copy is drawn here
+  // the browser's own snapshot is replaced by nothing: the copy is drawn
+  // here. Safari cancels a drag outright (dragstart, then dragend at once)
+  // when dragstart hands it an image still loading, so the blank loads
+  // with the grip, and an unready one is never handed over
   const blankRef = React.useRef<HTMLImageElement | null>(null)
-  const blank = () => {
-    if (!blankRef.current) {
-      blankRef.current = new window.Image()
-      blankRef.current.src =
-        "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-    }
-    return blankRef.current
+  React.useEffect(() => {
+    const img = new window.Image()
+    img.src =
+      "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+    blankRef.current = img
+  }, [])
+  const hideSnapshot = (dt: DataTransfer) => {
+    const img = blankRef.current
+    if (img?.complete && img.naturalWidth > 0) dt.setDragImage(img, 0, 0)
   }
 
   const buildGhost = (doms: HTMLElement[], width: number) => {
@@ -741,7 +781,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       dt.clearData()
       dt.setData("text/html", run.doms.map((x) => x.outerHTML).join(""))
       dt.setData("text/plain", run.doms.map((x) => x.textContent).join("\n"))
-      dt.setDragImage(blank(), 0, 0)
+      hideSnapshot(dt)
       carried(run.doms, true)
       startDragChrome(event, run.doms, Math.max(r0.width, r1.width))
       return
@@ -768,7 +808,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     event.dataTransfer.clearData()
     event.dataTransfer.setData("text/html", el.outerHTML)
     event.dataTransfer.setData("text/plain", el.textContent ?? "")
-    event.dataTransfer.setDragImage(blank(), 0, 0)
+    hideSnapshot(event.dataTransfer)
     startDragChrome(event, [el], r.width)
   }
   const onDragEnd = (event: React.DragEvent<HTMLButtonElement>) => {
@@ -805,7 +845,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   return createPortal(
     <div
       ref={layerRef}
-      className="pointer-events-none fixed inset-0 z-55"
+      className="pointer-events-none fixed inset-0 z-30"
       data-slot="rich-text-editor-block-handle"
     >
       {/* the grip stays mounted through a drag, hidden: the browser ends a
@@ -816,15 +856,20 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
             <TooltipTrigger
               render={
                 <button
+                  ref={gripRef}
                   type="button"
                   draggable
                   aria-label="Drag to move"
-                  onPointerDown={onPress}
+                  {...pressHandlers(onPress)}
                   onDragStart={onDragStart}
                   onDragEnd={onDragEnd}
                   onClick={onClick}
                   style={{ left: point.left, top: point.top }}
-                  className={cn("rte-bh-handle", onMedia && "is-on-media")}
+                  className={cn(
+                    "rte-bh-handle",
+                    onMedia && "is-on-media",
+                    onText && "is-on-text"
+                  )}
                 >
                   <DragIcon className="size-4" />
                 </button>

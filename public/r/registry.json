@@ -107,6 +107,21 @@
           "path": "registry/espresso/editor/column-resizer.tsx",
           "type": "registry:ui",
           "target": "components/ui/editor/column-resizer.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/url-safety.ts",
+          "type": "registry:ui",
+          "target": "components/ui/editor/url-safety.ts"
+        },
+        {
+          "path": "registry/espresso/editor/embed-utils.ts",
+          "type": "registry:ui",
+          "target": "components/ui/editor/embed-utils.ts"
+        },
+        {
+          "path": "registry/espresso/editor/press.ts",
+          "type": "registry:ui",
+          "target": "components/ui/editor/press.ts"
         }
       ]
     },

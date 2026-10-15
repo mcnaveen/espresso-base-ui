@@ -123,17 +123,17 @@ function RichTextSection() {
 export default function EditorPage() {
   return (
     <div className="flex flex-col p-8">
-      <Tabs defaultValue="text">
+      <Tabs defaultValue="rich-text">
         <TabsList size="default">
           <TabsIndicator />
-          <TabsTrigger value="text">Text</TabsTrigger>
           <TabsTrigger value="rich-text">Rich Text</TabsTrigger>
+          <TabsTrigger value="text">Text</TabsTrigger>
         </TabsList>
-        <TabsContent value="text" className="pt-4">
-          <TextEditorSections />
-        </TabsContent>
         <TabsContent value="rich-text" className="pt-4">
           <RichTextSection />
+        </TabsContent>
+        <TabsContent value="text" className="pt-4">
+          <TextEditorSections />
         </TabsContent>
       </Tabs>
     </div>

@@ -113,6 +113,9 @@ export const highlightValue = (name: string) => `var(--color-${hue(name)}-100)`
  * selected cells, appended to the `.tableWrapper` so it tracks the card's
  * horizontal scroll for free. A port of the branch's extension.
  */
+/** fired on window when a table's moved line starts to settle */
+export const TABLE_SETTLE = "rte-table-settle"
+
 class SelectionOverlay {
   private el: HTMLElement | null = null
   private resizeObserver: ResizeObserver | null = null
@@ -121,6 +124,7 @@ class SelectionOverlay {
 
   constructor(private view: PMEditorView) {
     window.addEventListener("resize", this.onResize)
+    window.addEventListener(TABLE_SETTLE, this.onResize)
     if (typeof ResizeObserver !== "undefined")
       this.resizeObserver = new ResizeObserver(() => this.update(this.view))
     this.update(view)
@@ -177,10 +181,88 @@ class SelectionOverlay {
     const hostRect = host.getBoundingClientRect()
     this.observe(host)
     const el = this.ensure(host)
+    // the cells measure where they are drawn, mid-slide included: while a
+    // moved line settles the ring waits, out of sight, and is drawn once
+    // the cells have landed
+    if (this.sliding(host).length) {
+      el.style.visibility = "hidden"
+      this.settleWith(host)
+      return
+    }
     el.style.left = `${box.left - hostRect.left - host.clientLeft + host.scrollLeft}px`
     el.style.top = `${box.top - hostRect.top - host.clientTop + host.scrollTop}px`
     el.style.width = `${box.right - box.left}px`
     el.style.height = `${box.bottom - box.top}px`
+    this.fit(el, host, box)
+    if (el.style.visibility === "hidden") {
+      el.style.visibility = ""
+      el.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 120 })
+    }
+  }
+
+  /**
+   * The ring's corners and edges, from where the run stands in the table,
+   * fitted in the same draw as its place so they never fall out of step
+   * (a moved column ringed where it lands, with the corners of where it
+   * landed). On the card's edge the ring keeps to the cell's own edge and
+   * turns on the card's 11px inner radius; inside, it lies on the rule
+   * around the run. A run reaching the foot of a scrolling card closes
+   * above the card's bar.
+   */
+  private fit(
+    el: HTMLElement,
+    host: HTMLElement,
+    box: { left: number; top: number; right: number; bottom: number }
+  ): void {
+    const table = host.querySelector("table")
+    const t = table?.getBoundingClientRect()
+    if (!table || !t) return
+    const at = (a: number, b: number) => Math.abs(a - b) <= 1.5
+    const top = at(box.top, t.top)
+    const bottom = at(box.bottom, t.bottom)
+    const left = at(box.left, t.left)
+    const right = at(box.right, t.right)
+    el.style.marginLeft = left ? "0px" : "-1px"
+    el.style.paddingRight = left ? "0px" : "1px"
+    el.style.marginTop = top ? "0px" : "-1px"
+    el.style.paddingBottom = top ? "0px" : "1px"
+    const bar = bottom
+      ? Math.max(0, -parseFloat(getComputedStyle(table).marginBottom))
+      : 0
+    el.style.height = `${box.bottom - box.top - bar}px`
+    const radius = (corner: boolean) => (corner ? "11px" : "0px")
+    el.style.borderTopLeftRadius = radius(top && left)
+    el.style.borderTopRightRadius = radius(top && right)
+    el.style.borderBottomLeftRadius = radius(bottom && left)
+    el.style.borderBottomRightRadius = radius(bottom && right)
+  }
+
+  // A row/column move settles with a WAAPI slide: for its duration the
+  // cells measure at their OLD positions, and Safari fires a late update
+  // mid-slide that would freeze the box there (the double-ring-after-drop
+  // bug). When the table is animating, redraw once more after it lands.
+  /** the table's cells still sliding into place (the ring's own fade aside) */
+  private sliding(host: HTMLElement): Animation[] {
+    if (typeof host.getAnimations !== "function") return []
+    return host.getAnimations({ subtree: true }).filter((a) => {
+      const target = (a.effect as KeyframeEffect | null)?.target
+      return (
+        a.playState === "running" &&
+        a.effect?.getTiming().iterations !== Infinity &&
+        target !== this.el
+      )
+    })
+  }
+  private settling = false
+  private settleWith(host: HTMLElement): void {
+    if (this.settling) return
+    const anims = this.sliding(host)
+    if (!anims.length) return
+    this.settling = true
+    Promise.allSettled(anims.map((a) => a.finished)).then(() => {
+      this.settling = false
+      this.update(this.view)
+    })
   }
 
   private ensure(host: HTMLElement): HTMLElement {
@@ -212,6 +294,7 @@ class SelectionOverlay {
     this.view.dom.classList.remove("table-cell-range")
     this.remove()
     window.removeEventListener("resize", this.onResize)
+    window.removeEventListener(TABLE_SETTLE, this.onResize)
     this.resizeObserver = null
   }
 }
@@ -252,18 +335,86 @@ export const TableCellColor = Extension.create({
   },
 })
 
+/* -------------------------------- link paste --------------------------------
+ * A URL pasted over a selected run of text links the run instead of
+ * replacing it, as the branch's link-paste-plugin does: single line only,
+ * validated as an absolute http(s) address — bare words and relative
+ * paths paste as the text they are.
+ */
+export const LinkPaste = Extension.create({
+  name: "rteLinkPaste",
+  addProseMirrorPlugins() {
+    const editor = this.editor
+    return [
+      new Plugin({
+        key: new PluginKey("handlePasteLink"),
+        props: {
+          handlePaste: (view, _event, slice): boolean => {
+            const { selection } = view.state
+            if (selection.empty) return false
+
+            // single node, single line only
+            if (slice.content.childCount > 1) return false
+            let textContent = ""
+            slice.content.forEach((node) => {
+              textContent += node.textContent
+            })
+            const text = textContent.trim()
+            if (!text || /[\r\n]/.test(text)) return false
+
+            let parsed: URL
+            try {
+              parsed = new URL(text)
+            } catch {
+              return false
+            }
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+              return false
+
+            return editor
+              .chain()
+              .setTextSelection({ from: selection.from, to: selection.to })
+              .setLink({ href: text })
+              .setTextSelection(selection.to)
+              .command(({ tr }) => {
+                tr.setStoredMarks([])
+                return true
+              })
+              .run()
+          },
+        },
+      }),
+    ]
+  },
+})
+
 /* --------------------------------- link-on ---------------------------------
  * The link the caret is in is drawn as the file's Selected state: on a
  * gray-100 ground, 22px tall on 4px corners (.rte-link-on).
  */
+/**
+ * Whether a link card is up. The ground marks the link the card is about,
+ * and only while it is up: a caret merely resting in a link (a whole
+ * paragraph linked, say) would otherwise sit under a gray slab.
+ */
+export const LINK_ON_KEY = new PluginKey<boolean>("rteLinkOn")
+
 export const LinkOn = Extension.create({
   name: "rteLinkOn",
   addProseMirrorPlugins() {
     return [
-      new Plugin({
-        key: new PluginKey("rteLinkOn"),
+      new Plugin<boolean>({
+        key: LINK_ON_KEY,
+        state: {
+          init: () => false,
+          apply: (tr, open) => {
+            const next = tr.getMeta(LINK_ON_KEY) as boolean | undefined
+            return next === undefined ? open : next
+          },
+        },
         props: {
           decorations(state) {
+            if (!LINK_ON_KEY.getState(state)) return null
             const type = state.schema.marks.link
             if (!type) return null
             const { from, to, $from } = state.selection
@@ -1217,15 +1368,26 @@ export const Columns = Node.create({
     return {
       insertColumns:
         (count = 2) =>
-        ({ commands }) =>
-          commands.insertContent({
+        ({ commands, tr }) => {
+          const done = commands.insertContent({
             type: this.name,
             attrs: { count },
             content: Array.from({ length: count }, () => ({
               type: "column",
               content: [{ type: "paragraph" }],
             })),
-          }),
+          })
+          if (!done) return false
+          // the insert leaves the caret in the last column; writing starts
+          // in the first
+          const { $from } = tr.selection
+          for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type.name !== this.name) continue
+            tr.setSelection(TextSelection.create(tr.doc, $from.before(d) + 3))
+            break
+          }
+          return true
+        },
       setColumnWidths:
         (pos: number, widths: number[] | null) =>
         ({ state, tr, dispatch }) => {
@@ -1433,5 +1595,6 @@ export const FONTS = [
   { label: "Serif", value: 'Georgia, "Times New Roman", serif' },
   { label: "Mono", value: 'ui-monospace, "SF Mono", Menlo, monospace' },
 ] as const
-export const DEFAULT_SIZE = 14
+/** the document's body size, before the view can be measured */
+export const DEFAULT_SIZE = 15
 export const SPACINGS = ["1", "1.15", "1.5", "2"] as const

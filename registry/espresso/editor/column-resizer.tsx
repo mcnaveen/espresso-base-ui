@@ -13,6 +13,8 @@ import type { Editor as TiptapEditor } from "@tiptap/core"
 
 import { cn } from "@/lib/utils"
 
+import { pressHandlers, type PressEvent } from "./press"
+
 /** no column goes under this share of its row */
 const MIN_SHARE = 0.1
 /** how far either side of the gap the bar still answers */
@@ -25,6 +27,9 @@ interface Gap {
   index: number
   /** where the bar stands */
   x: number
+  /** the span the bar answers in, which the press zone covers */
+  from: number
+  to: number
 }
 
 export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
@@ -32,6 +37,9 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     left: number
     top: number
     height: number
+    /** the press zone: wherever the bar shows, a press takes it */
+    from: number
+    to: number
   } | null>(null)
   const [dragging, setDragging] = React.useState(false)
   const hit = React.useRef<Gap | null>(null)
@@ -64,7 +72,14 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
           // edge: the bar stands on it. A picture row has no rule, so the
           // middle.
           const at = media ? (a.right + b.left) / 2 : b.left
-          return { row, cells, index: i, x: at }
+          return {
+            row,
+            cells,
+            index: i,
+            x: at,
+            from: a.right - REACH,
+            to: b.left + REACH,
+          }
         }
       }
       return null
@@ -75,6 +90,17 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
   React.useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (draggingRef.current) return
+      // a picture's own resize pill, a block's grip in the gap, or a
+      // picture resize under way, is no column gap: the bar would stand
+      // beside the pill or the grip and read as theirs
+      const onPill =
+        e.target instanceof Element &&
+        !!e.target.closest('[aria-label^="Resize media"], .rte-bh-handle')
+      if (onPill || document.body.classList.contains("rte-media-resizing")) {
+        hit.current = null
+        setBar(null)
+        return
+      }
       const gap = gapAt(e.clientX, e.clientY)
       hit.current = gap
       if (!gap) {
@@ -82,7 +108,13 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
         return
       }
       const r = gap.row.getBoundingClientRect()
-      setBar({ left: gap.x, top: r.top, height: r.height })
+      setBar({
+        left: gap.x,
+        top: r.top,
+        height: r.height,
+        from: gap.from,
+        to: gap.to,
+      })
     }
     const hide = () => {
       if (!draggingRef.current) setBar(null)
@@ -110,7 +142,7 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     return found
   }
 
-  const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
+  const onDown = (e: PressEvent<HTMLDivElement>) => {
     const gap = hit.current
     if (!gap || e.button !== 0 || editor.isDestroyed) return
     const pos = posOf(gap.row)
@@ -146,8 +178,6 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     setDragging(true)
     draggingRef.current = true
     document.body.classList.add("rte-col-drag")
-    const zone = e.currentTarget
-    zone.setPointerCapture(e.pointerId)
 
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - x0
@@ -168,13 +198,20 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
       const rb = cells[index + 1]?.getBoundingClientRect()
       if (ra && rb)
         setBar((b) =>
-          b ? { ...b, left: media ? (ra.right + rb.left) / 2 : rb.left } : b
+          b
+            ? {
+                ...b,
+                left: media ? (ra.right + rb.left) / 2 : rb.left,
+                from: ra.right - REACH,
+                to: rb.left + REACH,
+              }
+            : b
         )
     }
     const up = () => {
-      zone.removeEventListener("pointermove", move)
-      zone.removeEventListener("pointerup", up)
-      zone.removeEventListener("pointercancel", up)
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+      window.removeEventListener("pointercancel", up)
       document.body.classList.remove("rte-col-drag")
       setDragging(false)
       draggingRef.current = false
@@ -183,24 +220,44 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
       hit.current = null
       setBar(null)
     }
-    zone.addEventListener("pointermove", move)
-    zone.addEventListener("pointerup", up)
-    zone.addEventListener("pointercancel", up)
+    // the window follows the pointer: a press WebKit started without a
+    // pointerdown can take no capture
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up)
+    window.addEventListener("pointercancel", up)
   }
 
   if (!mounted || (!bar && !dragging)) return null
+  // the zone spans the whole reach the bar answers in, so a press wherever
+  // the bar is showing takes it; the bar itself stays on its boundary
+  const zone = bar
+    ? {
+        left: Math.min(bar.from, bar.left - 6),
+        width: Math.max(bar.to, bar.left + 6) - Math.min(bar.from, bar.left - 6),
+      }
+    : null
   return createPortal(
     <div
       className={cn("rte-cr", dragging && "is-dragging")}
       style={
-        bar
-          ? { left: bar.left, top: bar.top, height: bar.height }
+        bar && zone
+          ? {
+              left: zone.left,
+              width: zone.width,
+              marginLeft: 0,
+              justifyContent: "flex-start",
+              top: bar.top,
+              height: bar.height,
+            }
           : undefined
       }
       aria-hidden="true"
-      onPointerDown={onDown}
+      {...pressHandlers(onDown)}
     >
-      <div className="rte-cr-bar" />
+      <div
+        className="rte-cr-bar"
+        style={bar && zone ? { marginLeft: bar.left - zone.left - 1.5 } : undefined}
+      />
     </div>,
     document.body
   )

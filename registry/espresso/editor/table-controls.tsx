@@ -33,6 +33,8 @@ import {
 } from "@tiptap/pm/tables"
 
 import { cn } from "@/lib/utils"
+
+import { pressHandlers, pressPointerId, type PressEvent } from "./press"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,7 +57,7 @@ import {
   HeaderRowIcon,
   SmallCloseIcon,
 } from "@/components/ui/rich-text-editor-icons"
-import { hue, PALETTE } from "./extensions"
+import { hue, PALETTE, TABLE_SETTLE } from "./extensions"
 
 type Box = { left: number; top: number; width: number; height: number }
 const box = (r: DOMRect): Box => ({
@@ -154,6 +156,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     anchorPos: null as number | null,
     hoverPos: null as number | null,
     hovering: false,
+    resizeHeld: false,
     wrapper: null as HTMLElement | null,
     press: null as null | {
       kind: PressKind
@@ -181,6 +184,13 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
       col: setColOpen,
       cell: setCellOpen,
     }),
+    []
+  )
+  const rowAnchorRef = React.useRef<HTMLElement | null>(null)
+  const colAnchorRef = React.useRef<HTMLElement | null>(null)
+  const cellAnchorRef = React.useRef<HTMLElement | null>(null)
+  const anchorRefs = React.useMemo(
+    () => ({ row: rowAnchorRef, col: colAnchorRef, cell: cellAnchorRef }),
     []
   )
   const isOpenRef = React.useRef({ row: false, col: false, cell: false })
@@ -301,7 +311,6 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
         bottom = Math.max(bottom, b.bottom)
       })
       cellBox = { left, top, width: right - left, height: bottom - top }
-      fitSelectionBox(w, cellBox)
       cellKnobOn = inCard(right)
     } else if (cellEl && kind === "caret") {
       cellBox = box(cellEl.getBoundingClientRect())
@@ -332,33 +341,6 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
   // the run's selection box is drawn by the overlay on the cells' outer
   // edges; it moves out onto the rules, stops at the card's edge, and at a
   // corner of the card takes the card's inner 11px radius
-  const fitSelectionBox = (w: HTMLElement, run: Box) => {
-    const ring = w.querySelector<HTMLElement>(".table-selection-box")
-    const table = w.querySelector("table")
-    const t = table?.getBoundingClientRect()
-    if (!ring || !table || !t) return
-    const at = (x: number, y: number) => Math.abs(x - y) <= 1.5
-    const radius = (corner: boolean) => (corner ? "11px" : "0px")
-    const top = at(run.top, t.top)
-    const bottom = at(run.top + run.height, t.bottom)
-    const left = at(run.left, t.left)
-    const right = at(run.left + run.width, t.right)
-    ring.style.marginLeft = left ? "0px" : "-1px"
-    ring.style.paddingRight = left ? "0px" : "1px"
-    ring.style.marginTop = top ? "0px" : "-1px"
-    ring.style.paddingBottom = top ? "0px" : "1px"
-    // over a scrolling table the card's bar lies on the last row's foot: a
-    // run reaching it closes above the bar
-    const bar = bottom
-      ? Math.max(0, -parseFloat(getComputedStyle(table).marginBottom))
-      : 0
-    ring.style.height = `${run.height - bar}px`
-    ring.style.borderTopLeftRadius = radius(top && left)
-    ring.style.borderTopRightRadius = radius(top && right)
-    ring.style.borderBottomLeftRadius = radius(bottom && left)
-    ring.style.borderBottomRightRadius = radius(bottom && right)
-  }
-
   /* ---- the selection: a row, a column, a run of cells, or the caret's
      cell; the cell under the pointer takes over from a caret */
   const syncSelection = React.useCallback(() => {
@@ -457,8 +439,13 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
   const columnWidths = (c: Ctx): number[] => {
     const cols = [...(self.current.wrapper?.querySelectorAll("col") ?? [])]
     let raw: number[]
-    if (cols.length === c.map.width)
-      raw = cols.map((col) => col.getBoundingClientRect().width)
+    // Safari rects a sizeless <col> at 0: only trust the colgroup when
+    // every column measures, and fall back to the first row's cells
+    const colWidths =
+      cols.length === c.map.width
+        ? cols.map((col) => col.getBoundingClientRect().width)
+        : null
+    if (colWidths && colWidths.every((w) => w > 0)) raw = colWidths
     else {
       raw = []
       for (let i = 0; i < c.map.width; i++) {
@@ -810,6 +797,18 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     }) => {
       const s = self.current
       if (s.hoverPos !== null) s.hoverPos = transaction.mapping.map(s.hoverPos)
+      // a resize can begin before the hover hold has run (Safari delivers
+      // the press before our move listener sees the armed handle): the
+      // plugin's dragging flag is the sure signal, and the widths hold on
+      // its first appearance
+      const resizing = !!columnResizingPluginKey.getState(editor.state)
+        ?.dragging
+      if (resizing && !s.resizeHeld) {
+        s.resizeHeld = true
+        holdBeforeResize(editor)
+      } else if (!resizing && s.resizeHeld) {
+        s.resizeHeld = false
+      }
       schedule()
     }
     editor.on("transaction", onTransaction)
@@ -820,7 +819,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
       document.removeEventListener("scroll", schedule, true)
       window.removeEventListener("resize", schedule)
     }
-  }, [editor, syncSelection, measure])
+  }, [editor, syncSelection, measure, holdBeforeResize])
 
   // a closed menu lets the pointer take over again
   const menuOpen = rowOpen || colOpen || cellOpen
@@ -1117,10 +1116,8 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     moves.forEach(([el, d]) =>
       el.animate([{ transform: `${axis}(${d}px)` }, { transform: "none" }], SETTLE)
     )
-    w.querySelector(".table-selection-box")?.animate(
-      [{ opacity: 0 }, { opacity: 0, offset: 0.6 }, { opacity: 1 }],
-      { duration: 260 }
-    )
+    // the selection ring waits out the slide and arrives as the cells land
+    window.dispatchEvent(new Event(TABLE_SETTLE))
   }
 
   /** the leading rows made of header cells */
@@ -1193,16 +1190,20 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     if (w && before) settle(w, kind, from, at, before)
   }
 
+  // The press is driven from window listeners, not pointer capture on the
+  // grip: the grip is a React-rendered button in a layer that re-renders
+  // as the selection and geometry move, and an unmount mid-drag would
+  // take the captured pointer's events with it — the release never
+  // arriving, the ghost and the drop line left standing (the stuck-drag
+  // bug). Window listeners outlive any re-render.
+  const pressDetach = React.useRef<(() => void) | null>(null)
   const endPress = React.useCallback(() => {
     const s = self.current
     const p = s.press
     s.press = null
+    pressDetach.current?.()
+    pressDetach.current = null
     if (!p) return
-    try {
-      p.el.releasePointerCapture(p.pointerId)
-    } catch {
-      // the pointer is already gone
-    }
     setDragKind(null)
     setDropLine(null)
     setDropOn(false)
@@ -1224,40 +1225,10 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     [endPress]
   )
 
-  const onPress = (kind: PressKind) => (e: React.PointerEvent) => {
-    const s = self.current
-    if (e.button !== 0 || s.press) return
-    const index =
-      kind === "row"
-        ? geoRef.current.rowIndex
-        : kind === "col"
-          ? geoRef.current.colIndex
-          : -1
-    if (kind === "row") selectRow(index)
-    else if (kind === "col") selectCol(index)
-    const el = e.currentTarget as HTMLElement
-    s.press = {
-      kind,
-      index,
-      x: e.clientX,
-      y: e.clientY,
-      lastX: e.clientX,
-      lastY: e.clientY,
-      el,
-      pointerId: e.pointerId,
-      // an open menu closes on this press, and a release in place leaves
-      // it closed
-      wasOpen: isOpenRef.current[kind],
-      active: false,
-      to: null,
-    }
-    el.setPointerCapture(e.pointerId)
-    e.preventDefault()
-  }
-  const onPressMove = (e: React.PointerEvent) => {
+  const onPressMove = (e: PointerEvent) => {
     const s = self.current
     const p = s.press
-    if (!p || p.pointerId !== e.pointerId) return
+    if (!p || (p.pointerId !== -1 && p.pointerId !== e.pointerId)) return
     p.lastX = e.clientX
     p.lastY = e.clientY
     if (!p.active) {
@@ -1275,19 +1246,89 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     aim()
     carry(p)
   }
-  const onRelease = (e: React.PointerEvent) => {
+  const onRelease = (e: PointerEvent) => {
     const p = self.current.press
-    if (!p || p.pointerId !== e.pointerId) return
+    if (!p || (p.pointerId !== -1 && p.pointerId !== e.pointerId)) return
     endPress()
     if (p.active) {
       if (p.to !== null) moveLine(p.kind as DragKind, p.index, p.to)
     } else if (!p.wasOpen) {
-      openFor[p.kind](true)
+      // after the press's trailing click has passed (opening into it reads
+      // as an outside press), and through the real trigger: a bare
+      // setState open carries no press reason, and Base UI's hover
+      // interaction closes a reasonless menu the moment the pointer
+      // brushes the popup it opened under (Chrome fires those synthetic
+      // moves; the grip sits right where the popup lands)
+      const kind = p.kind
+      window.setTimeout(() => {
+        const anchor = anchorRefs[kind].current
+        if (anchor) {
+          // down AND up: the up releases Base UI's press tracking, or the
+          // next release over a menu item would run the item twice
+          for (const type of ["mousedown", "mouseup"] as const) {
+            anchor.dispatchEvent(
+              new MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                button: 0,
+              })
+            )
+          }
+        } else {
+          openFor[kind](true)
+        }
+      }, 0)
     }
   }
-  const onPressCancel = (e: React.PointerEvent) => {
-    if (self.current.press && self.current.press.pointerId === e.pointerId)
-      endPress()
+  const onPressRef = React.useRef({ onPressMove, onRelease })
+  onPressRef.current = { onPressMove, onRelease }
+
+  const onPress = (kind: PressKind) => (e: PressEvent) => {
+    const s = self.current
+    if (e.button !== 0) return
+    // a press that never saw its release (the pointer lost off-window)
+    // yields to the new one rather than wedging every grip
+    if (s.press) endPress()
+    const index =
+      kind === "row"
+        ? geoRef.current.rowIndex
+        : kind === "col"
+          ? geoRef.current.colIndex
+          : -1
+    if (kind === "row") selectRow(index)
+    else if (kind === "col") selectCol(index)
+    const el = e.currentTarget as HTMLElement
+    s.press = {
+      kind,
+      index,
+      x: e.clientX,
+      y: e.clientY,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      el,
+      pointerId: pressPointerId(e),
+      // an open menu closes on this press, and a release in place leaves
+      // it closed
+      wasOpen: isOpenRef.current[kind],
+      active: false,
+      to: null,
+    }
+    const move = (ev: PointerEvent) => onPressRef.current.onPressMove(ev)
+    const up = (ev: PointerEvent) => onPressRef.current.onRelease(ev)
+    const cancel = (ev: PointerEvent) => {
+      const held = self.current.press
+      if (held && (held.pointerId === -1 || held.pointerId === ev.pointerId))
+        endPress()
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up)
+    window.addEventListener("pointercancel", cancel)
+    pressDetach.current = () => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+      window.removeEventListener("pointercancel", cancel)
+    }
+    e.preventDefault()
   }
 
   /* ---- the menus */
@@ -1371,7 +1412,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
     <div
       ref={layerRef}
       data-slot="rich-text-editor-table-controls"
-      className="rte-tc pointer-events-none fixed inset-0 z-60"
+      className="rte-tc pointer-events-none fixed inset-0 z-40"
       aria-hidden={false}
     >
       {/* the row handle, at the left edge of the caret's row */}
@@ -1382,6 +1423,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
               nativeButton={false}
               render={
                 <span
+                  ref={rowAnchorRef}
                   className="rte-tc-anchor"
                   style={{
                     left: px(tableBox.left - 4),
@@ -1446,10 +1488,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
             title="Row options"
             aria-haspopup="menu"
             aria-expanded={rowOpen}
-            onPointerDown={onPress("row")}
-            onPointerMove={onPressMove}
-            onPointerUp={onRelease}
-            onPointerCancel={onPressCancel}
+            {...pressHandlers(onPress("row"))}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault()
@@ -1482,6 +1521,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
               nativeButton={false}
               render={
                 <span
+                  ref={colAnchorRef}
                   className="rte-tc-anchor"
                   style={{
                     left: px(colBox.left + colBox.width / 2 - 10),
@@ -1521,10 +1561,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
             title="Column options"
             aria-haspopup="menu"
             aria-expanded={colOpen}
-            onPointerDown={onPress("col")}
-            onPointerMove={onPressMove}
-            onPointerUp={onRelease}
-            onPointerCancel={onPressCancel}
+            {...pressHandlers(onPress("col"))}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault()
@@ -1558,6 +1595,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
               nativeButton={false}
               render={
                 <span
+                  ref={cellAnchorRef}
                   className="rte-tc-anchor"
                   style={{
                     left: px(cellBox.left + cellBox.width - 6),
@@ -1597,10 +1635,7 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
             title="Cell options"
             aria-haspopup="menu"
             aria-expanded={cellOpen}
-            onPointerDown={onPress("cell")}
-            onPointerMove={onPressMove}
-            onPointerUp={onRelease}
-            onPointerCancel={onPressCancel}
+            {...pressHandlers(onPress("cell"))}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 e.preventDefault()

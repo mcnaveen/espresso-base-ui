@@ -83,7 +83,7 @@ const CSS = `
 .rte-doc .rte-player {
   margin: 8px 0;
 }
-.rte-player.ProseMirror-selectednode {
+.ProseMirror-selectednode > .rte-player {
   outline: 2px solid var(--border);
   outline-offset: 2px;
 }
@@ -239,6 +239,32 @@ const CSS = `
   color: var(--foreground);
   cursor: text;
 }
+/* a checklist's tick, as the library checkbox (ui/checkbox) draws it: its
+   glyph at 12px in the primary's ink, wiped in from the left over 200ms as
+   the box is checked, gone at once as it is cleared. Drawn on the label,
+   over the box: the input itself takes no pseudo-element everywhere */
+.rte-doc ul[data-type='taskList'] > li > label::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  pointer-events: none;
+  background-color: var(--primary-foreground);
+  -webkit-mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath fill='black' d='M8.03488 1.99125C8.2154 1.78244 8.53103 1.76003 8.73996 1.94047C8.94881 2.12099 8.97216 2.43661 8.79172 2.64555L4.15988 8.00785C4.0661 8.11645 3.9303 8.18018 3.78683 8.18168C3.64331 8.18315 3.50589 8.12235 3.40988 8.01567L1.21554 5.57817C1.03111 5.373 1.04775 5.05681 1.25265 4.87211C1.45791 4.68738 1.77496 4.70397 1.95968 4.90922L3.77316 6.92485L8.03488 1.99125Z'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+  mask: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath fill='black' d='M8.03488 1.99125C8.2154 1.78244 8.53103 1.76003 8.73996 1.94047C8.94881 2.12099 8.97216 2.43661 8.79172 2.64555L4.15988 8.00785C4.0661 8.11645 3.9303 8.18018 3.78683 8.18168C3.64331 8.18315 3.50589 8.12235 3.40988 8.01567L1.21554 5.57817C1.03111 5.373 1.04775 5.05681 1.25265 4.87211C1.45791 4.68738 1.77496 4.70397 1.95968 4.90922L3.77316 6.92485L8.03488 1.99125Z'/%3E%3C/svg%3E") center / 12px 12px no-repeat;
+  clip-path: inset(0 100% 0 0);
+}
+.rte-doc ul[data-type='taskList'] > li > label:has(input:checked)::after {
+  clip-path: inset(0 0 0 0);
+  transition: clip-path 200ms ease-out;
+}
+/* a bullet list's dots stand back from the words they mark */
+.rte-doc ul:not([data-type='taskList']) > li::marker {
+  color: var(--muted-foreground);
+}
 .rte-details summary::-webkit-details-marker {
   display: none;
 }
@@ -381,8 +407,10 @@ const CSS = `
 .rte-doc table tr:last-child > * {
   border-bottom: 0;
 }
+/* the header row stands as tall as any other row (40px): its smaller
+   label keeps the body's 21px line */
 .rte-doc table th {
-  height: 32px;
+  height: 40px;
   font-weight: 400;
 }
 .rte-doc table td p {
@@ -393,7 +421,7 @@ const CSS = `
 }
 .rte-doc table th p {
   font-size: 13px;
-  line-height: 15px;
+  line-height: 21px;
   margin: 0;
   color: var(--accent-foreground);
 }
@@ -417,14 +445,26 @@ const CSS = `
 ${cellTintRules}
 
 /* ---- a block picked up by its grip, or selected by a click on it: a
-   gray-100 ground 4px past its edges ---- */
-.rte-doc .ProseMirror-selectednode:not(img):not(video) {
+   gray-100 ground 4px past its edges. A picture, the player and the
+   attachment row keep their own chrome instead: the selected node there
+   is the view's wrapper, full column wide, and the wash would slab far
+   past the media's own box ---- */
+.rte-doc
+  .ProseMirror-selectednode:not(img):not(video):not(
+    :has(> .rte-media),
+    :has(> .rte-player),
+    :has(> .rte-attachment)
+  ) {
   background-color: var(--secondary);
   border-radius: 4px;
   box-shadow: 0 0 0 4px var(--secondary);
 }
 .rte-doc.rte-dragging .ProseMirror-selectednode:not(img):not(video) {
   opacity: 0.4;
+}
+/* a selected row is its button on the gray ground, not the block's halo */
+.rte-doc .ProseMirror-selectednode > .rte-attachment > a {
+  background-color: var(--secondary);
 }
 
 /* ---- the table selection: a 1px gray-500 line around the cell or the run
@@ -437,7 +477,9 @@ ${cellTintRules}
   border-radius: 0;
   box-shadow: inset 0 0 0 1px var(--accent-foreground);
 }
-.rte-doc.table-cell-range .selectedCell::after {
+/* a run of cells is one ring (the overlay's box), not a ring per cell: the
+   overlay marks the editor element itself, inside .rte-doc */
+.rte-doc .ProseMirror.table-cell-range .selectedCell::after {
   box-shadow: none;
 }
 .rte-doc .table-selection-box {
@@ -502,7 +544,7 @@ ${cellTintRules}
 .rte-doc table tr > :last-child > .column-resize-handle {
   right: 0;
 }
-.rte-doc.resize-cursor {
+.rte-doc .ProseMirror.resize-cursor {
   cursor: col-resize;
 }
 
@@ -519,12 +561,29 @@ ${cellTintRules}
 /* the document's pictures keep the prose scale's 2em rhythm */
 .rte-doc > img,
 .rte-doc .rte-figure,
+.rte-doc .rte-media,
 .rte-doc [data-type='columns'][data-media='true'] {
   margin-top: 2em;
   margin-bottom: 2em;
 }
-.rte-doc .rte-figure > img {
+.rte-doc .rte-figure > img,
+.rte-doc .rte-media img {
   margin: 0;
+}
+/* a cell's picture fills its cell until it is resized; a resized one
+   keeps its width (never wider than the cell) and the ring hugs it */
+.rte-doc [data-type='columns'][data-media='true'] .rte-media {
+  width: 100%;
+  margin: 0;
+}
+.rte-doc [data-type='columns'][data-media='true'] .rte-media > div {
+  /* top and bottom only: the sides are the picture's alignment in its cell */
+  margin-top: 0;
+  margin-bottom: 0;
+  max-width: 100%;
+}
+.rte-doc [data-type='columns'][data-media='true'] .rte-media > div:not([data-sized]) {
+  width: 100% !important;
 }
 
 /* a caption under a frame: 14px gray-500, centred 8px below */
@@ -994,6 +1053,17 @@ body.rte-tc-dragging .rte-tc-handle {
 .rte-bh-handle.is-on-media:active {
   background-color: rgb(0 0 0 / 0.6);
 }
+/* over a column's text, as a picture's grip is over the picture: a solid
+   card, ruled, so the dots read over the letters they cover */
+.rte-bh-handle.is-on-text {
+  background-color: var(--background);
+  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.06);
+  color: var(--muted-foreground);
+}
+.rte-bh-handle.is-on-text:hover {
+  background-color: var(--secondary);
+  color: var(--foreground);
+}
 /* out of sight, not out of the way: the browser ends a drag whose source
    stops taking pointer events */
 .rte-bh-handle.is-dragging {
@@ -1080,7 +1150,9 @@ body.rte-tc-dragging .rte-tc-handle {
    corners, gray-400, gray-600 under the pointer and while it drags */
 .rte-cr {
   position: fixed;
-  z-index: 54;
+  /* under the block grip (30), the table controls (40) and every menu
+     (50): a column's grip stands on its gap and must take its own press */
+  z-index: 25;
   display: flex;
   width: 12px;
   margin-left: -6px;

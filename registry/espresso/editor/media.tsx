@@ -8,13 +8,23 @@
 import * as React from "react"
 import { createRoot } from "react-dom/client"
 import type { Editor as TiptapEditor } from "@tiptap/core"
-import type { Transaction } from "@tiptap/pm/state"
+import { NodeSelection, type Transaction } from "@tiptap/pm/state"
 import {
   NodeViewWrapper,
   type NodeViewProps,
 } from "@tiptap/react"
 
+import { pressHandlers, type PressEvent } from "./press"
 import { freshEmbedSlot } from "./extensions"
+import {
+  ANY_HOST,
+  calculateAspectRatio,
+  IFRAME_ALLOWLIST,
+  processEmbedUrl,
+  unsupportedImageMessage,
+  validateIframeUrl,
+} from "./embed-utils"
+import { isSafeUrl } from "./url-safety"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -33,6 +43,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -89,16 +102,6 @@ const readAsDataURL = (file: File) =>
     reader.readAsDataURL(file)
   })
 
-/** only a web address reaches the document */
-const isSafeUrl = (raw: string) => {
-  try {
-    const url = new URL(raw, window.location.origin)
-    return url.protocol === "http:" || url.protocol === "https:"
-  } catch {
-    return false
-  }
-}
-
 function probeImageDimensions(
   src: string
 ): Promise<{ width: number; height: number }> {
@@ -109,42 +112,6 @@ function probeImageDimensions(
     img.onerror = () => reject(new Error("not an image"))
     img.src = src
   })
-}
-
-/** a share link turned into the address its platform embeds from */
-export function processEmbedUrl(raw: string): string {
-  try {
-    const url = new URL(raw.trim())
-    if (
-      (url.hostname.endsWith("youtube.com") && url.searchParams.get("v")) ||
-      url.hostname === "youtu.be"
-    ) {
-      const id =
-        url.hostname === "youtu.be"
-          ? url.pathname.slice(1)
-          : url.searchParams.get("v")
-      if (id) return `https://www.youtube.com/embed/${id}`
-    }
-    if (url.hostname.endsWith("vimeo.com") && /^\/\d+/.test(url.pathname))
-      return `https://player.vimeo.com/video${url.pathname}`
-    if (url.hostname.endsWith("figma.com") && !url.pathname.startsWith("/embed"))
-      return `https://www.figma.com/embed?embed_host=share&url=${encodeURIComponent(url.href)}`
-    if (url.hostname.endsWith("codepen.io") && url.pathname.includes("/pen/"))
-      return url.href.replace("/pen/", "/embed/")
-    return url.href
-  } catch {
-    return raw.trim()
-  }
-}
-
-export const aspectRatioOf = (src: string): number => {
-  try {
-    const url = new URL(src)
-    if (url.pathname.endsWith(".pdf")) return 8.5 / 11
-  } catch {
-    // keep the player's shape
-  }
-  return 16 / 9
 }
 
 /* ------------------------------- source cards ------------------------------
@@ -174,10 +141,12 @@ function SourceCard({
     <div className="relative flex w-[380px] flex-col gap-4 rounded-xl bg-card pt-2 pb-3.5 shadow-elevation-xl">
       <div className="flex h-7 items-end border-b border-border-soft px-4">
         <Tabs value={tab} onValueChange={(v) => onTab(String(v))}>
+          {/* the card's own rule carries the row end to end; the list's
+              would stop short at its last tab, doubling the line */}
           <TabsList
             variant="line"
             size="sm"
-            className="h-7 gap-4 border-b-0 px-0"
+            className="h-7 gap-4 border-b-0! px-0"
             aria-label={label}
           >
             <TabsIndicator />
@@ -225,13 +194,20 @@ export function ImageSourceCard({
 
   const chooseFile = async () => {
     const [file] = await pickFiles({ accept: "image/*" })
-    if (file) onFile(file)
+    if (!file) return
+    // a file the browser cannot draw is turned away at the door
+    const unsupported = unsupportedImageMessage(file)
+    if (unsupported) {
+      setError(unsupported)
+      return
+    }
+    onFile(file)
   }
 
   const embed = async () => {
     const src = url.trim()
     if (!src || checking) return
-    if (!isSafeUrl(src)) {
+    if (!isSafeUrl(src, { base: window.location.origin })) {
       setError("That link is not a web address the editor can take")
       return
     }
@@ -262,10 +238,15 @@ export function ImageSourceCard({
       onClose={onClose}
     >
       {tab === "upload" ? (
-        <div className="px-4">
+        <div className="flex flex-col gap-2 px-4">
           <Button size="sm" className="w-full" onClick={chooseFile}>
             Upload file
           </Button>
+          {error && (
+            <p className={hintClass(error)} role="alert">
+              {error}
+            </p>
+          )}
         </div>
       ) : (
         <form
@@ -288,7 +269,13 @@ export function ImageSourceCard({
                 setError("")
               }}
             />
-            <Button size="sm" className="w-full" disabled={checking}>
+            <Button
+              type="button"
+              size="sm"
+              className="w-full"
+              disabled={checking}
+              onClick={() => void embed()}
+            >
               Embed image
             </Button>
           </div>
@@ -321,14 +308,20 @@ export function EmbedSourceCard({
   const HINT =
     "Works with links of PDFs, Google Drive, Google Maps, Codepen, Figma, Notion etc."
 
+  // the file embeds a website as readily as a player, so every host —
+  // but a link must still be a whole http(s) address (validateIframeUrl)
   const take = (raw: string) => {
     const src = processEmbedUrl(raw)
-    if (!isSafeUrl(src)) {
+    if (
+      !validateIframeUrl(src, { allowlist: [...IFRAME_ALLOWLIST, ANY_HOST] })
+    ) {
       setError("That link is not one the editor can embed")
       return
     }
     setError("")
-    onLink({ src, aspectRatio: aspectRatioOf(src) })
+    const info = calculateAspectRatio(src)
+    // the node draws CSS aspect-ratio, width over height
+    onLink({ src, aspectRatio: info.width / info.height })
   }
 
   const embed = () => {
@@ -387,7 +380,12 @@ export function EmbedSourceCard({
             }}
           />
           <div className="flex flex-col gap-2">
-            <Button type="submit" size="sm" className="w-full">
+            <Button
+              type="button"
+              size="sm"
+              className="w-full"
+              onClick={embed}
+            >
               Embed link
             </Button>
             <p className={hintClass(error)} role={error ? "alert" : undefined}>
@@ -444,6 +442,7 @@ export function ImageSlotView(props: NodeViewProps) {
       width: 0,
       height: 0,
     }))
+    freshImages.add(src)
     editor
       .chain()
       .focus()
@@ -457,6 +456,7 @@ export function ImageSlotView(props: NodeViewProps) {
   const takeLink = (image: { src: string; width: number; height: number }) => {
     const r = range()
     if (!r) return
+    freshImages.add(image.src)
     editor
       .chain()
       .focus()
@@ -1049,6 +1049,463 @@ export function AttachmentView(props: NodeViewProps) {
           </span>
         )}
       </a>
+    </NodeViewWrapper>
+  )
+}
+
+/* ------------------------------- image chrome ------------------------------
+ * The picture's node view, ported from the kit's MediaNodeView: the one
+ * 28px chrome button 10px in from the top-right corner with every action
+ * in the menu behind it — Caption (a check while it shows), Align with
+ * checks, Resize (Full width / Large / Medium / Small), Replace image,
+ * Duplicate, Open link / Copy image / Download, Delete — the edge resize
+ * pills (3×66 on full corners, 4px in, a dark gray in a 1px white halo),
+ * the 1px ink-gray-6 selection ring 4px outside the picture, and the
+ * caption field centred beneath.
+ */
+
+const MEDIA_CHROME_BUTTON =
+  "flex size-7 items-center justify-center rounded-lg bg-black/35 text-white transition-colors hover:bg-black/50 active:bg-black/60 data-popup-open:bg-black/60"
+
+const MenuCheck = () => (
+  <svg
+    viewBox="0 0 24 24"
+    className="ml-auto size-4 shrink-0 text-secondary-foreground"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+)
+
+async function copyImageToClipboard(src: string) {
+  try {
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    await new Promise((resolve, reject) => {
+      img.onload = resolve
+      img.onerror = reject
+      img.src = src
+    })
+    const canvas = document.createElement("canvas")
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    canvas.getContext("2d")!.drawImage(img, 0, 0)
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/png")
+    )
+    if (!blob) throw new Error("no blob")
+    await navigator.clipboard.write([
+      new ClipboardItem({ "image/png": blob }),
+    ])
+  } catch {
+    // a cross-origin picture cannot be read back: the address will do
+    await navigator.clipboard.writeText(src).catch(() => {})
+  }
+}
+
+async function downloadMedia(src: string) {
+  try {
+    const response = await fetch(src)
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = src.split("/").pop()?.split("?")[0] || "image"
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    const a = document.createElement("a")
+    a.href = src
+    a.download = "image"
+    a.click()
+  }
+}
+
+/** the pictures laid down this session: their caption field opens for
+ * them, right where a caption is normally written */
+export const freshImages = new Set<string>()
+
+const SIZE_OPTIONS = [
+  { value: 1, label: "Full width" },
+  { value: 0.75, label: "Large" },
+  { value: 0.5, label: "Medium" },
+  { value: 0.25, label: "Small" },
+]
+const ALIGN_OPTIONS = [
+  { value: "left", label: "Left" },
+  { value: "center", label: "Center" },
+  { value: "right", label: "Right" },
+] as const
+
+export function ImageView(props: NodeViewProps) {
+  const { node, editor, selected, getPos, updateAttributes, deleteNode } =
+    props
+  const editable = editor.isEditable
+  const src = (node.attrs.src as string) || ""
+  const align = (node.attrs.align as string | null) ?? "center"
+  const width = node.attrs.width as number | null
+  const [menuOpen, setMenuOpen] = React.useState(false)
+  // the user's explicit caption toggle; null means "use the default"
+  const [captionToggle, setCaptionToggle] = React.useState<boolean | null>(
+    null
+  )
+  const [caption, setCaption] = React.useState(
+    (node.attrs.caption as string) || ""
+  )
+  const imgRef = React.useRef<HTMLImageElement | null>(null)
+  const boxRef = React.useRef<HTMLDivElement | null>(null)
+
+  // re-sync when the attr changes elsewhere, without clobbering typing
+  const attrCaption = (node.attrs.caption as string) || ""
+  const lastAttr = React.useRef(attrCaption)
+  React.useEffect(() => {
+    if (attrCaption !== lastAttr.current) {
+      lastAttr.current = attrCaption
+      setCaption(attrCaption)
+    }
+  }, [attrCaption])
+
+  const showCaption =
+    captionToggle !== null
+      ? captionToggle
+      : Boolean(node.attrs.caption) || (editable && freshImages.has(src))
+
+  const selectMedia = React.useCallback(() => {
+    const pos = getPos()
+    if (typeof pos !== "number") return
+    try {
+      editor.view.dispatch(
+        editor.view.state.tr.setSelection(
+          NodeSelection.create(editor.view.state.doc, pos)
+        )
+      )
+    } catch {
+      // the node moved out from underneath
+    }
+  }, [editor, getPos])
+
+  /* ---- the ratio-locked edge drag, after the kit's useNodeViewResize */
+  const commitSize = (w: number, h: number) => {
+    updateAttributes({ width: Math.round(w), height: Math.round(h) })
+    // a node selection maps off a replaced node: selected again, so the
+    // pills and the menu survive every resize
+    requestAnimationFrame(selectMedia)
+  }
+  const startResize = (event: PressEvent, edge: "left" | "right") => {
+    if (!editable) return
+    event.preventDefault()
+    selectMedia()
+    const el = imgRef.current
+    if (!el) return
+    const box = boxRef.current
+    const startX = event.clientX
+    const startWidth = el.offsetWidth
+    const aspect = el.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
+    // in a picture row the cell is the most there is; elsewhere the page
+    const inRow = !!box?.closest("[data-type='columns'][data-media='true']")
+    const maxWidth =
+      (inRow ? box?.parentElement?.clientWidth : undefined) ||
+      editor.view.dom.clientWidth
+    const onMove = (ev: PointerEvent) => {
+      const delta = (ev.clientX - startX) * (edge === "left" ? -1 : 1)
+      const w = Math.max(50, Math.min(startWidth + delta, maxWidth))
+      el.style.width = `${w}px`
+      el.style.height = `${w * aspect}px`
+      if (box) {
+        box.style.width = `${w}px`
+        box.setAttribute("data-sized", "")
+      }
+    }
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+      document.body.style.cursor = ""
+      document.body.classList.remove("rte-media-resizing")
+      const w = el.offsetWidth
+      const h = el.offsetHeight
+      commitSize(w, h)
+      requestAnimationFrame(() => {
+        el.style.width = ""
+        el.style.height = ""
+      })
+    }
+    document.body.classList.add("rte-media-resizing")
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    document.body.style.cursor = "ew-resize"
+  }
+  const resizeBy = (delta: number) => {
+    const el = imgRef.current
+    const current = width || el?.offsetWidth || 320
+    const aspect = el?.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
+    const w = Math.max(50, current + delta)
+    commitSize(w, w * aspect)
+  }
+  const resizeTo = (fraction: number) => {
+    selectMedia()
+    const el = imgRef.current
+    const available =
+      boxRef.current?.parentElement?.clientWidth || el?.offsetWidth || 320
+    const aspect = el?.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
+    const w = Math.max(50, Math.round(available * fraction))
+    commitSize(w, w * aspect)
+  }
+
+  /* ---- actions */
+  const duplicate = () => {
+    const pos = getPos()
+    if (typeof pos !== "number") return
+    const live = editor.state.doc.nodeAt(pos)
+    if (!live) return
+    editor.view.dispatch(editor.state.tr.insert(pos + live.nodeSize, live))
+  }
+  const toggleCaption = () => {
+    const next = !showCaption
+    setCaptionToggle(next)
+    if (!next) {
+      setCaption("")
+      if (node.attrs.caption) updateAttributes({ caption: null })
+    }
+  }
+  const commitCaption = () => {
+    if (((node.attrs.caption as string) || "") === caption) return
+    lastAttr.current = caption
+    updateAttributes({ caption: caption || null })
+  }
+
+  const chromeVisible = (selected || menuOpen) && editable
+  const menuItem = (
+    label: string,
+    run: () => void,
+    checked?: boolean
+  ) => (
+    <DropdownMenuItem key={label} onClick={run}>
+      {label}
+      {checked && <MenuCheck />}
+    </DropdownMenuItem>
+  )
+
+  return (
+    <NodeViewWrapper as="div" className="rte-media" data-drag-handle>
+      <div
+        ref={boxRef}
+        className={cn(
+          "group relative isolate block max-w-full overflow-hidden rounded-lg",
+          align === "center" && "mx-auto",
+          align === "right" && "mr-0 ml-auto",
+          align === "left" && "mr-auto ml-0",
+          // the design's picture ring: a 1px ink-gray-6 line 4px outside
+          selected &&
+            "ring-1 ring-[color:var(--muted-foreground)] ring-offset-4 ring-offset-[var(--background)]"
+        )}
+        style={{ width: width ? `${width}px` : "auto" }}
+        data-sized={width ? "" : undefined}
+      >
+        <div className="relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            ref={imgRef}
+            className="rounded-lg"
+            src={src}
+            alt={(node.attrs.alt as string) || ""}
+            width={width ?? undefined}
+            height={(node.attrs.height as number | null) ?? undefined}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (editable) selectMedia()
+            }}
+          />
+
+          {/* the one chrome button, every action in the menu behind it */}
+          <div
+            className={cn(
+              "absolute top-2.5 right-2.5 z-20 items-center gap-1.5",
+              chromeVisible ? "flex" : "hidden"
+            )}
+          >
+            <DropdownMenu
+              open={menuOpen}
+              onOpenChange={setMenuOpen}
+              modal={false}
+            >
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    className={MEDIA_CHROME_BUTTON}
+                    aria-label="Media options"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <DotHorizontalIcon className="size-4" />
+                  </button>
+                }
+              />
+              <DropdownMenuContent align="end" sideOffset={4}>
+                <DropdownMenuGroup>
+                  {menuItem("Caption", toggleCaption, showCaption)}
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>Align</DropdownMenuLabel>
+                  {ALIGN_OPTIONS.map((option) =>
+                    menuItem(
+                      option.label,
+                      () => updateAttributes({ align: option.value }),
+                      align === option.value
+                    )
+                  )}
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>Resize</DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      {SIZE_OPTIONS.map((size) =>
+                        menuItem(size.label, () => resizeTo(size.value))
+                      )}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  {menuItem("Replace image", () => {
+                    const pos = getPos()
+                    if (typeof pos === "number")
+                      editor.commands.replaceImage(pos)
+                  })}
+                  {menuItem("Duplicate", duplicate)}
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  {menuItem("Open link", () => {
+                    if (src) window.open(src, "_blank", "noopener")
+                  })}
+                  {menuItem("Copy image", () => void copyImageToClipboard(src))}
+                  {menuItem("Download", () => void downloadMedia(src))}
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  {menuItem("Delete", () => deleteNode())}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* the design's edge pills, the hand's target 14px deep */}
+          {selected && editable && (
+            <>
+              {(["left", "right"] as const).map((edge) => (
+                <button
+                  key={edge}
+                  type="button"
+                  className={cn(
+                    "absolute top-1/2 z-30 flex h-[66px] max-h-[50%] w-3.5 -translate-y-1/2 cursor-ew-resize touch-none items-center bg-transparent",
+                    edge === "left"
+                      ? "left-0 justify-start pl-1"
+                      : "right-0 justify-end pr-1"
+                  )}
+                  aria-label={`Resize media from ${edge} edge`}
+                  {...pressHandlers((e) => startResize(e, edge))}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                      e.preventDefault()
+                      resizeBy(-20)
+                    } else if (
+                      e.key === "ArrowRight" ||
+                      e.key === "ArrowDown"
+                    ) {
+                      e.preventDefault()
+                      resizeBy(20)
+                    }
+                  }}
+                >
+                  <span className="pointer-events-none h-full w-[3px] rounded-full bg-[#383838] ring-1 ring-white" />
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* the caption: a centred field while editing, plain text read */}
+        {editable && showCaption ? (
+          <div
+            data-media-text-field
+            draggable={false}
+            className="w-full pt-1.5"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onDragStart={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+            onCopy={(e) => e.stopPropagation()}
+            onCut={(e) => e.stopPropagation()}
+            onPaste={(e) => e.stopPropagation()}
+          >
+            <input
+              value={caption}
+              draggable={false}
+              className="h-7 w-full border-none bg-transparent text-center text-[13px] leading-[1.5] tracking-[0.015em] text-accent-foreground outline-none placeholder:text-card-foreground"
+              placeholder="Add a caption"
+              aria-label="Caption"
+              onChange={(e) => setCaption(e.target.value)}
+              onBlur={commitCaption}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault()
+                  ;(e.target as HTMLInputElement).blur()
+                  return
+                }
+                if (e.key !== "Enter") return
+                // Enter writes the caption and starts the line after the
+                // picture, as the kit's caption field does
+                e.preventDefault()
+                commitCaption()
+                const pos = getPos()
+                if (typeof pos !== "number") return
+                requestAnimationFrame(() => {
+                  const live = editor.state.doc.nodeAt(pos)
+                  if (!live) return
+                  const after = pos + live.nodeSize
+                  const paragraph = editor.state.schema.nodes.paragraph
+                  const next = editor.state.doc.nodeAt(after)
+                  const chainTo = editor.chain().focus(undefined, {
+                    scrollIntoView: false,
+                  })
+                  if (next?.isTextblock) {
+                    chainTo.setTextSelection(after + 1).run()
+                  } else {
+                    editor.view.dispatch(
+                      editor.state.tr.insert(after, paragraph.create())
+                    )
+                    editor
+                      .chain()
+                      .focus(undefined, { scrollIntoView: false })
+                      .setTextSelection(after + 1)
+                      .run()
+                  }
+                })
+              }}
+            />
+          </div>
+        ) : node.attrs.caption ? (
+          <div className="w-full px-1 pt-2.5 text-center text-[13px] leading-[1.5] tracking-[0.015em] text-accent-foreground">
+            {node.attrs.caption as string}
+          </div>
+        ) : null}
+      </div>
     </NodeViewWrapper>
   )
 }

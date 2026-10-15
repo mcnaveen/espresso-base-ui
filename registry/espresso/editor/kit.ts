@@ -30,9 +30,13 @@ import {
 import Youtube from "@tiptap/extension-youtube"
 import { Placeholder } from "@tiptap/extensions"
 
+import { ReactNodeViewRenderer } from "@tiptap/react"
+
 import { LinkEditor } from "./link-card"
+import { ImageView } from "./media"
 import {
   Attachment,
+  LinkPaste,
   Audio,
   Callout,
   CommentMark,
@@ -95,7 +99,9 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
           options.heading === false
             ? false
             : (options.heading ?? { levels: [1, 2, 3, 4, 5, 6] }),
-        link: { openOnClick: false },
+        // the branch's own paste plugin links a selection in place of
+        // tiptap's, which would swap the words for the pasted address
+        link: { openOnClick: false, linkOnPaste: false },
       }),
       TextStyle,
     ]
@@ -107,11 +113,34 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
       extensions.push(Highlight.configure({ multicolor: true }))
     if (options.image !== false)
       extensions.push(
-        // the picture carries its caption, drawn centred beneath it
+        // the picture: its caption, size and alignment as attributes, and
+        // the file's chrome drawn by the node view (media.tsx)
         Image.extend({
           addAttributes() {
             return {
               ...this.parent?.(),
+              width: {
+                default: null,
+                parseHTML: (el: HTMLElement) => {
+                  const raw = el.getAttribute("width")
+                  const n = raw ? Number(raw) : NaN
+                  return Number.isFinite(n) ? n : null
+                },
+              },
+              height: {
+                default: null,
+                parseHTML: (el: HTMLElement) => {
+                  const raw = el.getAttribute("height")
+                  const n = raw ? Number(raw) : NaN
+                  return Number.isFinite(n) ? n : null
+                },
+              },
+              align: {
+                default: null,
+                parseHTML: (el: HTMLElement) => el.getAttribute("data-align"),
+                renderHTML: (attrs: Record<string, unknown>) =>
+                  attrs.align ? { "data-align": attrs.align } : {},
+              },
               caption: {
                 default: null,
                 parseHTML: (el: HTMLElement) =>
@@ -139,6 +168,9 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
                 caption,
               ],
             ] as never
+          },
+          addNodeView() {
+            return ReactNodeViewRenderer(ImageView)
           },
         })
       )
@@ -235,7 +267,7 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
     if (options.columns !== false) extensions.push(Columns, Column)
     if (options.image !== false) extensions.push(ImageSlot)
     if (options.embed !== false) extensions.push(EmbedSlot)
-    extensions.push(LinkOn, LinkEditor, CommentMark)
+    extensions.push(LinkOn, LinkEditor, LinkPaste, CommentMark)
     if (options.callout !== false) extensions.push(Callout)
     if (options.attachment !== false) extensions.push(Attachment)
     if (options.audio !== false) extensions.push(Audio)
