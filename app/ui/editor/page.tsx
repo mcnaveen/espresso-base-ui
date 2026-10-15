@@ -95,6 +95,26 @@ function RichTextSection() {
         key={String(empty)}
         content={empty ? "" : article}
         editable={editable}
+        commenter={{ who: "You", image: "/images/rte/team-3.jpg" }}
+        initialComments={[
+          {
+            id: "c1",
+            replies: [
+              {
+                who: "James Fenimore",
+                image: "/images/rte/team-1.jpg",
+                when: "4d ago",
+                text: "Okay cool, shall i finalise this design then?",
+              },
+              {
+                who: "Bray Bill",
+                image: "/images/rte/team-2.jpg",
+                when: "6h ago",
+                text: "No major issues. Let’s get feedback from the dev team once.",
+              },
+            ],
+          },
+        ]}
       />
     </div>
   )

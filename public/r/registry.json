@@ -87,6 +87,26 @@
           "path": "registry/espresso/editor/rich-text-editor-icons.tsx",
           "type": "registry:ui",
           "target": "components/ui/rich-text-editor-icons.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/styles.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/styles.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/media.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/media.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/link-card.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/link-card.tsx"
+        },
+        {
+          "path": "registry/espresso/editor/column-resizer.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/column-resizer.tsx"
         }
       ]
     },
