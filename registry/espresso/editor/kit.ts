@@ -306,8 +306,12 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
         }).configure({ nocookie: true }),
         Video
       )
-    if (options.subscript !== false) extensions.push(Subscript)
-    if (options.superscript !== false) extensions.push(Superscript)
+    // a run is raised or lowered, never both: setting one takes the other
+    // off, or the lowered text would sit inside the raised one
+    if (options.subscript !== false)
+      extensions.push(Subscript.extend({ excludes: "subscript superscript" }))
+    if (options.superscript !== false)
+      extensions.push(Superscript.extend({ excludes: "superscript subscript" }))
     if (options.mention !== false)
       extensions.push(
         Mention.configure({
