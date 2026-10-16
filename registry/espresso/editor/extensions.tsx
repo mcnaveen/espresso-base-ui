@@ -15,7 +15,7 @@ import {
   type Editor as TiptapEditor,
 } from "@tiptap/core"
 import type { Node as PMNode } from "@tiptap/pm/model"
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
+import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
 import { CellSelection } from "@tiptap/pm/tables"
 import {
   Decoration,
@@ -32,6 +32,7 @@ import {
   EmbedSlotView,
   EmbedView,
   ImageSlotView,
+  VideoView,
   openEmbedSourcePopup,
   openImageSourcePopup,
   openRemoveEmbedModal,
@@ -804,6 +805,13 @@ export const Audio = Node.create({
 
 // an embed: any page in a frame
 // a video file, as a plain player for the carried file
+const booleanAttribute = (name: string) => ({
+  default: false,
+  parseHTML: (el: HTMLElement) => el.hasAttribute(name),
+  renderHTML: (attrs: Record<string, unknown>) =>
+    attrs[name] ? { [name]: "" } : {},
+})
+
 export const Video = Node.create({
   name: "video",
   group: "block",
@@ -813,6 +821,16 @@ export const Video = Node.create({
     return {
       src: { default: null },
       title: { default: null },
+      caption: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-caption"),
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs.caption ? { "data-caption": attrs.caption } : {},
+      },
+      autoplay: booleanAttribute("autoplay"),
+      loop: booleanAttribute("loop"),
+      muted: booleanAttribute("muted"),
+      ...embedFrameAttributes,
     }
   },
   parseHTML: () => [{ tag: "video[src]" }],
@@ -820,6 +838,70 @@ export const Video = Node.create({
     "video",
     mergeAttributes(HTMLAttributes, { controls: "true" }),
   ],
+  addNodeView() {
+    return ReactNodeViewRenderer(VideoView, {
+      // the player's own presses (play, seek, volume) stay the player's:
+      // ProseMirror taking them would select the video instead of playing it
+      stopEvent: ({ event }) =>
+        event.target instanceof HTMLVideoElement && !event.type.startsWith("drag"),
+    })
+  },
+})
+
+/**
+ * A selection the browser draws around one whole leaf block (a video, an
+ * embed, a picture) is that block selected. ProseMirror rebuilds a
+ * selection it reads back from the page as text between its ends, which
+ * for a lone atom lands on a caret beside it; Safari, nudging the
+ * selection drawn around a <video> or an <iframe>, makes ProseMirror read
+ * it back, and the video chosen a moment ago became a caret.
+ */
+/** the leaf blocks Safari will not hold a drawn selection around */
+const PLAYERS = new Set(["video", "youtube", "embed"])
+
+export const AtomSelection = Extension.create({
+  name: "rteAtomSelection",
+  addProseMirrorPlugins() {
+    // a key just pressed moved the selection itself (an arrow off the
+    // player), which is no read-back to refuse
+    let lastKey = 0
+    return [
+      new Plugin({
+        key: new PluginKey("rteAtomSelection"),
+        // Safari collapses the selection drawn around a player to a caret
+        // beside it, and ProseMirror reads that back: a selection-only step
+        // from a selected player to a bare caret at its edge, made by no
+        // click, key or scroll, is that read, and the player stays chosen
+        filterTransaction(tr, state) {
+          const was = state.selection
+          if (!(was instanceof NodeSelection) || !PLAYERS.has(was.node.type.name))
+            return true
+          if (tr.docChanged || !tr.selectionSet) return true
+          if (tr.getMeta("pointer") || tr.scrolledIntoView) return true
+          if (Date.now() - lastKey < 150) return true
+          const next = tr.selection
+          if (!(next instanceof TextSelection) || !next.empty) return true
+          const pos = next.from
+          return pos < was.from - 1 || pos > was.to + 1
+        },
+        props: {
+          handleKeyDown() {
+            lastKey = Date.now()
+            return false
+          },
+          createSelectionBetween(view, $anchor, $head) {
+            const from = Math.min($anchor.pos, $head.pos)
+            const to = Math.max($anchor.pos, $head.pos)
+            const node = view.state.doc.nodeAt(from)
+            if (!node || !node.isAtom || !node.isBlock) return null
+            if (from + node.nodeSize !== to) return null
+            if (!NodeSelection.isSelectable(node)) return null
+            return NodeSelection.create(view.state.doc, from)
+          },
+        },
+      }),
+    ]
+  },
 })
 
 /** an embed's place on the page: its width once resized, its alignment,

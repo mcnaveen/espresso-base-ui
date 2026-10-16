@@ -597,6 +597,12 @@ body.rte-media-resizing,
 body.rte-media-resizing * {
   cursor: ew-resize !important;
 }
+/* a live player (an embed's frame is its own page) would take the drag's
+   moves as they pass over it, and the size would stop following */
+body.rte-media-resizing iframe,
+body.rte-media-resizing video {
+  pointer-events: none !important;
+}
 
 /* a caption under a frame: 14px gray-500, centred 8px below */
 .rte-doc .rte-media-caption {

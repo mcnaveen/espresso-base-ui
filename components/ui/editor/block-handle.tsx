@@ -14,7 +14,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import type { Editor as TiptapEditor } from "@tiptap/core"
-import { Fragment, type Node as PMNode } from "@tiptap/pm/model"
+import type { Node as PMNode } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 
 import { cn } from "@/lib/utils"
@@ -56,6 +56,49 @@ const SIDE_INSET = 6
 const inCell = (el: Element) =>
   el.parentElement?.matches('[data-type="column"]') === true &&
   el.closest(MEDIA_ROW) !== null
+/**
+ * The copy carried under the pointer holds no live player: a cloned video
+ * would be decoded again from its source (an upload's data, megabytes of
+ * it), a cloned frame would load its page again, and the copy, moved every
+ * frame, would drag them along. A video becomes a still of its frame as it
+ * stands, a frame a quiet box its size.
+ */
+function lightenPlayers(source: HTMLElement, copy: HTMLElement) {
+  const live = [...source.querySelectorAll<HTMLVideoElement | HTMLIFrameElement>("video, iframe")]
+  const cloned = [...copy.querySelectorAll<HTMLVideoElement | HTMLIFrameElement>("video, iframe")]
+  cloned.forEach((el, i) => {
+    const from = live[i]
+    const box = from?.getBoundingClientRect()
+    const still = document.createElement("canvas")
+    still.width = Math.max(1, Math.round(box?.width ?? 1))
+    still.height = Math.max(1, Math.round(box?.height ?? 1))
+    still.className = el.className
+    still.style.cssText = el.style.cssText
+    still.style.display = "block"
+    still.style.width = `${box?.width ?? 0}px`
+    still.style.height = `${box?.height ?? 0}px`
+    still.style.background = "#000"
+    if (from instanceof HTMLVideoElement && from.readyState >= 2) {
+      try {
+        still.getContext("2d")?.drawImage(from, 0, 0, still.width, still.height)
+      } catch {
+        // a frame that cannot be read stays a black still
+      }
+    }
+    el.replaceWith(still)
+  })
+}
+
+/** the block's markup for a drop outside, without an upload's data in it */
+const lightHTML = (el: HTMLElement) =>
+  el.outerHTML.replace(/(src|poster|href)="data:[^"]*"/g, '$1=""')
+
+/** an empty paragraph: a line with nothing on it */
+const isEmptyLine = (el: Element) =>
+  el.matches("p") &&
+  (el.textContent ?? "").trim() === "" &&
+  !el.querySelector("img, video, iframe, audio, [data-type]")
+
 /** a block (or list item) anywhere inside a column of a row of prose */
 const inTextColumn = (el: Element) =>
   el.closest('[data-type="column"]') !== null && el.closest(MEDIA_ROW) === null
@@ -169,14 +212,25 @@ function posOf(view: View, el: HTMLElement): number | null {
  * prose. (A row of pictures keeps the cell and offers it an Add Image
  * slot, extensions.tsx.)
  */
+/**
+ * The cell the block at `from` is the whole of: its column holds nothing
+ * else but empty lines (a picture or a video set into a column keeps the
+ * line it was set on). Carrying the block carries the column: beside
+ * another column of its row the columns change places; anywhere else the
+ * cell goes, its empty lines with it.
+ */
 function emptiedCell(state: View["state"], from: number) {
   const $from = state.doc.resolve(from)
   const column = state.schema.nodes.column
-  return $from.parent.type === column &&
-    $from.parent.childCount === 1 &&
-    !$from.node($from.depth - 1).attrs.media
-    ? { pos: $from.before(), row: $from.before($from.depth - 1) }
-    : null
+  if ($from.parent.type !== column) return null
+  if ($from.node($from.depth - 1).attrs.media) return null
+  const index = $from.index()
+  let alone = true
+  $from.parent.forEach((child, _offset, i) => {
+    if (i === index) return
+    if (!(child.isTextblock && child.content.size === 0)) alone = false
+  })
+  return alone ? { pos: $from.before(), row: $from.before($from.depth - 1) } : null
 }
 
 type Tr = View["state"]["tr"]
@@ -272,18 +326,21 @@ function dropBeside(
     order.splice(at, 0, fromIdx)
     if (order.every((v, i) => v === i)) return null
     const widths = row.attrs.widths as number[] | null
-    tr.replaceWith(
-      rowPos,
-      rowPos + row.nodeSize,
-      row.type.create(
-        { ...row.attrs, widths: widths ? order.map((i) => widths[i]) : null },
-        Fragment.from(order.map((i) => cells[i])),
-        row.marks
-      )
-    )
-    // the carried block, in its column's new place, stays selected
+    // the moved column alone is taken out and set back in: the row is not
+    // drawn again, so the other columns' players (a video, an embed) keep
+    // playing where they are rather than loading again
+    const moving = cells[fromIdx]
+    tr.delete(offsets[fromIdx], offsets[fromIdx] + moving.nodeSize)
+    const kept = tr.doc.nodeAt(rowPos)
+    if (!kept) return null
     let landed = rowPos + 1
-    for (let i = 0; i < at; i++) landed += cells[order[i]].nodeSize
+    for (let i = 0; i < at; i++) landed += kept.child(i).nodeSize
+    tr.insert(landed, moving)
+    tr.setNodeMarkup(rowPos, undefined, {
+      ...row.attrs,
+      widths: widths ? order.map((i) => widths[i]) : null,
+    })
+    // the carried block, in its column's new place, stays selected
     try {
       tr.setSelection(NodeSelection.create(tr.doc, landed + 1))
     } catch {
@@ -532,10 +589,11 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       return false
     if (from === to || from.parentElement !== to.parentElement) return false
     if (from.parentElement?.matches(MEDIA_ROW)) return false
+    // the column's only block, its empty lines aside (see emptiedCell)
     const blocks = [...from.children].filter(
-      (c) => c instanceof HTMLElement && !c.matches(SKIP)
+      (c) => c instanceof HTMLElement && !c.matches(SKIP) && !isEmptyLine(c)
     )
-    return blocks.length === 1
+    return blocks.length === 1 && blocks[0] === source
   }
 
   /** the edge the pointer is over */
@@ -827,6 +885,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     for (const d of doms) {
       const copy = d.cloneNode(true) as HTMLElement
       copy.classList.remove("ProseMirror-selectednode", "rte-bh-carried")
+      lightenPlayers(d, copy)
       inner.appendChild(copy)
     }
     docWrap.appendChild(inner)
@@ -879,7 +938,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       const dt = event.dataTransfer
       dt.effectAllowed = "move"
       dt.clearData()
-      dt.setData("text/html", run.doms.map((x) => x.outerHTML).join(""))
+      dt.setData("text/html", run.doms.map((x) => lightHTML(x)).join(""))
       dt.setData("text/plain", run.doms.map((x) => x.textContent).join("\n"))
       hideSnapshot(dt)
       carried(run.doms, true)
@@ -906,7 +965,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     editor.view.dragging = { slice: sel.content(), move: true }
     event.dataTransfer.effectAllowed = "move"
     event.dataTransfer.clearData()
-    event.dataTransfer.setData("text/html", el.outerHTML)
+    event.dataTransfer.setData("text/html", lightHTML(el))
     event.dataTransfer.setData("text/plain", el.textContent ?? "")
     hideSnapshot(event.dataTransfer)
     startDragChrome(event, [el], r.width)
