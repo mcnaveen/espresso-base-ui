@@ -194,9 +194,10 @@ const CSS = `
   margin: 0;
 }
 /* two pictures in one cell (one duplicated, or dropped onto another) stand
-   8px apart: each is its own block here, not a paragraph's picture */
+   as far apart as the cells do (the row's 16px gap), so a grid of them is
+   even both ways: each is its own block here, not a paragraph's picture */
 .rte-doc [data-type='columns'][data-media='true'] [data-type='column'] > * + * {
-  margin-top: 8px;
+  margin-top: 16px;
 }
 .rte-doc [data-type='columns'][data-media='true'] .ProseMirror-trailingBreak {
   display: none;
