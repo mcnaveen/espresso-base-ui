@@ -1370,7 +1370,9 @@ export const Column = Node.create({
 export const Columns = Node.create({
   name: "columns",
   group: "block",
-  content: "column{2,4}",
+  // one column is a layout too: its blocks stacked, still carried and
+  // rearranged as a layout's; a block set beside one makes columns again
+  content: "column{1,4}",
   defining: true,
   addAttributes() {
     return {

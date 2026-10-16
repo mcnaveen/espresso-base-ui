@@ -140,6 +140,9 @@ const CSS = `
   gap: 24px;
   margin: 8px 0;
 }
+.rte-doc [data-type='columns'][data-count='1'] {
+  grid-template-columns: minmax(0, 1fr);
+}
 .rte-doc [data-type='columns'][data-count='2'] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

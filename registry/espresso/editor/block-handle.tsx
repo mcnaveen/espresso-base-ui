@@ -205,13 +205,13 @@ function leaveBehind(
   const cellPos = tr.mapping.map(cell.pos)
   const gone = tr.doc.nodeAt(cellPos)
   if (!row || row.type !== columns || !gone) return
-  if (row.childCount === 2) {
-    // one cell would be left: the row goes, and the other cell's blocks
-    // stand on their own in its place
-    const kept = row.child(cellPos === rowAt + 1 ? 1 : 0)
-    tr.replaceWith(rowAt, rowAt + row.nodeSize, kept.content)
+  if (row.childCount === 1) {
+    // the layout's last block has left it: the layout goes
+    tr.delete(rowAt, rowAt + row.nodeSize)
     return
   }
+  // otherwise the emptied cell goes and the rest stay a layout, one
+  // column of them stacked if one is all that is left
   tr.delete(cellPos, cellPos + gone.nodeSize)
   const after = tr.doc.nodeAt(rowAt)
   if (after?.type === columns)
@@ -481,6 +481,34 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       if (editor.isDestroyed || !d.source) return null
       const el = blockAt(editor.view, x, y, true)
       if (!el || el === d.source.el || d.source.el.contains(el)) return null
+      // a block carried within its own layout and set on the layout's top
+      // or bottom edge stays in the layout, first or last in it: leaving
+      // the layout is a drop on a block outside it
+      if (el.matches(ROW) && !el.matches(MEDIA_ROW) && el.contains(d.source.el)) {
+        const r = el.getBoundingClientRect()
+        const top = y < r.top + r.height / 2
+        const cells = [...el.children].filter(
+          (c): c is HTMLElement => c instanceof HTMLElement
+        )
+        const cell = top ? cells[0] : cells[cells.length - 1]
+        const blocks = cell
+          ? [...cell.children].filter(
+              (c): c is HTMLElement =>
+                c instanceof HTMLElement && !c.matches(SKIP)
+            )
+          : []
+        const inner = top ? blocks[0] : blocks[blocks.length - 1]
+        if (!inner || inner === d.source.el) return null
+        const innerPos = posOf(editor.view, inner)
+        if (innerPos === null) return null
+        return {
+          el: inner,
+          pos: innerPos,
+          before: top,
+          side: null,
+          box: inner.getBoundingClientRect(),
+        }
+      }
       // a run lands outside itself, and only above or below a block
       if (d.source.run && inRun(d.source.run, el)) return null
       const pos = posOf(editor.view, el)
