@@ -14,6 +14,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import type { Editor as TiptapEditor } from "@tiptap/core"
+import { Fragment, type Node as PMNode } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 
 import { cn } from "@/lib/utils"
@@ -245,6 +246,51 @@ function dropBeside(
 
   // where it goes
   const $to = state.doc.resolve(to)
+
+  // a column's only block beside another column of its own layout: the
+  // columns change places in one step (inserting first would make a fifth
+  // column of a full row, which the layout does not hold); their shares
+  // go with them
+  if (
+    fromCell &&
+    $to.parent.type === column &&
+    fromCell.row === $to.before($to.depth - 1)
+  ) {
+    const rowPos = fromCell.row
+    const row = state.doc.nodeAt(rowPos)
+    if (!row) return null
+    const cells: PMNode[] = []
+    row.forEach((c) => cells.push(c))
+    const offsets: number[] = []
+    row.forEach((_c, offset) => offsets.push(rowPos + 1 + offset))
+    const fromIdx = offsets.indexOf(fromCell.pos)
+    const toIdx = offsets.indexOf($to.before())
+    if (fromIdx < 0 || toIdx < 0) return null
+    const order = cells.map((_c, i) => i)
+    order.splice(fromIdx, 1)
+    const at = order.indexOf(toIdx) + (side === "left" ? 0 : 1)
+    order.splice(at, 0, fromIdx)
+    if (order.every((v, i) => v === i)) return null
+    const widths = row.attrs.widths as number[] | null
+    tr.replaceWith(
+      rowPos,
+      rowPos + row.nodeSize,
+      row.type.create(
+        { ...row.attrs, widths: widths ? order.map((i) => widths[i]) : null },
+        Fragment.from(order.map((i) => cells[i])),
+        row.marks
+      )
+    )
+    // the carried block, in its column's new place, stays selected
+    let landed = rowPos + 1
+    for (let i = 0; i < at; i++) landed += cells[order[i]].nodeSize
+    try {
+      tr.setSelection(NodeSelection.create(tr.doc, landed + 1))
+    } catch {
+      // a block that cannot hold a node selection keeps the caret's
+    }
+    return tr
+  }
   let landed: number
   if ($to.parent.type === column) {
     const cellPos = $to.before()
@@ -474,6 +520,24 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     [editor]
   )
 
+  /**
+   * A column's only block set beside another column of the same layout:
+   * the columns change places, their number stays, so even a full row
+   * (four) takes it
+   */
+  const reorders = (source: HTMLElement, el: HTMLElement) => {
+    const from = source.parentElement
+    const to = el.parentElement
+    if (!from?.matches('[data-type="column"]') || !to?.matches('[data-type="column"]'))
+      return false
+    if (from === to || from.parentElement !== to.parentElement) return false
+    if (from.parentElement?.matches(MEDIA_ROW)) return false
+    const blocks = [...from.children].filter(
+      (c) => c instanceof HTMLElement && !c.matches(SKIP)
+    )
+    return blocks.length === 1
+  }
+
   /** the edge the pointer is over */
   const landingAt = React.useCallback(
     (x: number, y: number) => {
@@ -516,7 +580,11 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       const box = el.getBoundingClientRect()
       const zone = Math.min(SIDE_ZONE, box.width / 4)
       let side: "left" | "right" | null = null
-      if (!d.source.run && sideable(el) && !swapsWith(d.source.el, el)) {
+      if (
+        !d.source.run &&
+        (sideable(el) || reorders(d.source.el, el)) &&
+        !swapsWith(d.source.el, el)
+      ) {
         if (x >= box.left + SIDE_INSET && x < box.left + SIDE_INSET + zone)
           side = "left"
         else if (x > box.right - zone) side = "right"
