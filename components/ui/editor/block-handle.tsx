@@ -14,6 +14,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import type { Editor as TiptapEditor } from "@tiptap/core"
+import type { Node as PMNode } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 
 import { cn } from "@/lib/utils"
@@ -55,6 +56,49 @@ const SIDE_INSET = 6
 const inCell = (el: Element) =>
   el.parentElement?.matches('[data-type="column"]') === true &&
   el.closest(MEDIA_ROW) !== null
+/**
+ * The copy carried under the pointer holds no live player: a cloned video
+ * would be decoded again from its source (an upload's data, megabytes of
+ * it), a cloned frame would load its page again, and the copy, moved every
+ * frame, would drag them along. A video becomes a still of its frame as it
+ * stands, a frame a quiet box its size.
+ */
+function lightenPlayers(source: HTMLElement, copy: HTMLElement) {
+  const live = [...source.querySelectorAll<HTMLVideoElement | HTMLIFrameElement>("video, iframe")]
+  const cloned = [...copy.querySelectorAll<HTMLVideoElement | HTMLIFrameElement>("video, iframe")]
+  cloned.forEach((el, i) => {
+    const from = live[i]
+    const box = from?.getBoundingClientRect()
+    const still = document.createElement("canvas")
+    still.width = Math.max(1, Math.round(box?.width ?? 1))
+    still.height = Math.max(1, Math.round(box?.height ?? 1))
+    still.className = el.className
+    still.style.cssText = el.style.cssText
+    still.style.display = "block"
+    still.style.width = `${box?.width ?? 0}px`
+    still.style.height = `${box?.height ?? 0}px`
+    still.style.background = "#000"
+    if (from instanceof HTMLVideoElement && from.readyState >= 2) {
+      try {
+        still.getContext("2d")?.drawImage(from, 0, 0, still.width, still.height)
+      } catch {
+        // a frame that cannot be read stays a black still
+      }
+    }
+    el.replaceWith(still)
+  })
+}
+
+/** the block's markup for a drop outside, without an upload's data in it */
+const lightHTML = (el: HTMLElement) =>
+  el.outerHTML.replace(/(src|poster|href)="data:[^"]*"/g, '$1=""')
+
+/** an empty paragraph: a line with nothing on it */
+const isEmptyLine = (el: Element) =>
+  el.matches("p") &&
+  (el.textContent ?? "").trim() === "" &&
+  !el.querySelector("img, video, iframe, audio, [data-type]")
+
 /** a block (or list item) anywhere inside a column of a row of prose */
 const inTextColumn = (el: Element) =>
   el.closest('[data-type="column"]') !== null && el.closest(MEDIA_ROW) === null
@@ -168,14 +212,25 @@ function posOf(view: View, el: HTMLElement): number | null {
  * prose. (A row of pictures keeps the cell and offers it an Add Image
  * slot, extensions.tsx.)
  */
+/**
+ * The cell the block at `from` is the whole of: its column holds nothing
+ * else but empty lines (a picture or a video set into a column keeps the
+ * line it was set on). Carrying the block carries the column: beside
+ * another column of its row the columns change places; anywhere else the
+ * cell goes, its empty lines with it.
+ */
 function emptiedCell(state: View["state"], from: number) {
   const $from = state.doc.resolve(from)
   const column = state.schema.nodes.column
-  return $from.parent.type === column &&
-    $from.parent.childCount === 1 &&
-    !$from.node($from.depth - 1).attrs.media
-    ? { pos: $from.before(), row: $from.before($from.depth - 1) }
-    : null
+  if ($from.parent.type !== column) return null
+  if ($from.node($from.depth - 1).attrs.media) return null
+  const index = $from.index()
+  let alone = true
+  $from.parent.forEach((child, _offset, i) => {
+    if (i === index) return
+    if (!(child.isTextblock && child.content.size === 0)) alone = false
+  })
+  return alone ? { pos: $from.before(), row: $from.before($from.depth - 1) } : null
 }
 
 type Tr = View["state"]["tr"]
@@ -205,13 +260,13 @@ function leaveBehind(
   const cellPos = tr.mapping.map(cell.pos)
   const gone = tr.doc.nodeAt(cellPos)
   if (!row || row.type !== columns || !gone) return
-  if (row.childCount === 2) {
-    // one cell would be left: the row goes, and the other cell's blocks
-    // stand on their own in its place
-    const kept = row.child(cellPos === rowAt + 1 ? 1 : 0)
-    tr.replaceWith(rowAt, rowAt + row.nodeSize, kept.content)
+  if (row.childCount === 1) {
+    // the layout's last block has left it: the layout goes
+    tr.delete(rowAt, rowAt + row.nodeSize)
     return
   }
+  // otherwise the emptied cell goes and the rest stay a layout, one
+  // column of them stacked if one is all that is left
   tr.delete(cellPos, cellPos + gone.nodeSize)
   const after = tr.doc.nodeAt(rowAt)
   if (after?.type === columns)
@@ -245,6 +300,54 @@ function dropBeside(
 
   // where it goes
   const $to = state.doc.resolve(to)
+
+  // a column's only block beside another column of its own layout: the
+  // columns change places in one step (inserting first would make a fifth
+  // column of a full row, which the layout does not hold); their shares
+  // go with them
+  if (
+    fromCell &&
+    $to.parent.type === column &&
+    fromCell.row === $to.before($to.depth - 1)
+  ) {
+    const rowPos = fromCell.row
+    const row = state.doc.nodeAt(rowPos)
+    if (!row) return null
+    const cells: PMNode[] = []
+    row.forEach((c) => cells.push(c))
+    const offsets: number[] = []
+    row.forEach((_c, offset) => offsets.push(rowPos + 1 + offset))
+    const fromIdx = offsets.indexOf(fromCell.pos)
+    const toIdx = offsets.indexOf($to.before())
+    if (fromIdx < 0 || toIdx < 0) return null
+    const order = cells.map((_c, i) => i)
+    order.splice(fromIdx, 1)
+    const at = order.indexOf(toIdx) + (side === "left" ? 0 : 1)
+    order.splice(at, 0, fromIdx)
+    if (order.every((v, i) => v === i)) return null
+    const widths = row.attrs.widths as number[] | null
+    // the moved column alone is taken out and set back in: the row is not
+    // drawn again, so the other columns' players (a video, an embed) keep
+    // playing where they are rather than loading again
+    const moving = cells[fromIdx]
+    tr.delete(offsets[fromIdx], offsets[fromIdx] + moving.nodeSize)
+    const kept = tr.doc.nodeAt(rowPos)
+    if (!kept) return null
+    let landed = rowPos + 1
+    for (let i = 0; i < at; i++) landed += kept.child(i).nodeSize
+    tr.insert(landed, moving)
+    tr.setNodeMarkup(rowPos, undefined, {
+      ...row.attrs,
+      widths: widths ? order.map((i) => widths[i]) : null,
+    })
+    // the carried block, in its column's new place, stays selected
+    try {
+      tr.setSelection(NodeSelection.create(tr.doc, landed + 1))
+    } catch {
+      // a block that cannot hold a node selection keeps the caret's
+    }
+    return tr
+  }
   let landed: number
   if ($to.parent.type === column) {
     const cellPos = $to.before()
@@ -474,6 +577,25 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     [editor]
   )
 
+  /**
+   * A column's only block set beside another column of the same layout:
+   * the columns change places, their number stays, so even a full row
+   * (four) takes it
+   */
+  const reorders = (source: HTMLElement, el: HTMLElement) => {
+    const from = source.parentElement
+    const to = el.parentElement
+    if (!from?.matches('[data-type="column"]') || !to?.matches('[data-type="column"]'))
+      return false
+    if (from === to || from.parentElement !== to.parentElement) return false
+    if (from.parentElement?.matches(MEDIA_ROW)) return false
+    // the column's only block, its empty lines aside (see emptiedCell)
+    const blocks = [...from.children].filter(
+      (c) => c instanceof HTMLElement && !c.matches(SKIP) && !isEmptyLine(c)
+    )
+    return blocks.length === 1 && blocks[0] === source
+  }
+
   /** the edge the pointer is over */
   const landingAt = React.useCallback(
     (x: number, y: number) => {
@@ -481,6 +603,34 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       if (editor.isDestroyed || !d.source) return null
       const el = blockAt(editor.view, x, y, true)
       if (!el || el === d.source.el || d.source.el.contains(el)) return null
+      // a block carried within its own layout and set on the layout's top
+      // or bottom edge stays in the layout, first or last in it: leaving
+      // the layout is a drop on a block outside it
+      if (el.matches(ROW) && !el.matches(MEDIA_ROW) && el.contains(d.source.el)) {
+        const r = el.getBoundingClientRect()
+        const top = y < r.top + r.height / 2
+        const cells = [...el.children].filter(
+          (c): c is HTMLElement => c instanceof HTMLElement
+        )
+        const cell = top ? cells[0] : cells[cells.length - 1]
+        const blocks = cell
+          ? [...cell.children].filter(
+              (c): c is HTMLElement =>
+                c instanceof HTMLElement && !c.matches(SKIP)
+            )
+          : []
+        const inner = top ? blocks[0] : blocks[blocks.length - 1]
+        if (!inner || inner === d.source.el) return null
+        const innerPos = posOf(editor.view, inner)
+        if (innerPos === null) return null
+        return {
+          el: inner,
+          pos: innerPos,
+          before: top,
+          side: null,
+          box: inner.getBoundingClientRect(),
+        }
+      }
       // a run lands outside itself, and only above or below a block
       if (d.source.run && inRun(d.source.run, el)) return null
       const pos = posOf(editor.view, el)
@@ -488,7 +638,11 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       const box = el.getBoundingClientRect()
       const zone = Math.min(SIDE_ZONE, box.width / 4)
       let side: "left" | "right" | null = null
-      if (!d.source.run && sideable(el) && !swapsWith(d.source.el, el)) {
+      if (
+        !d.source.run &&
+        (sideable(el) || reorders(d.source.el, el)) &&
+        !swapsWith(d.source.el, el)
+      ) {
         if (x >= box.left + SIDE_INSET && x < box.left + SIDE_INSET + zone)
           side = "left"
         else if (x > box.right - zone) side = "right"
@@ -731,6 +885,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     for (const d of doms) {
       const copy = d.cloneNode(true) as HTMLElement
       copy.classList.remove("ProseMirror-selectednode", "rte-bh-carried")
+      lightenPlayers(d, copy)
       inner.appendChild(copy)
     }
     docWrap.appendChild(inner)
@@ -783,7 +938,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       const dt = event.dataTransfer
       dt.effectAllowed = "move"
       dt.clearData()
-      dt.setData("text/html", run.doms.map((x) => x.outerHTML).join(""))
+      dt.setData("text/html", run.doms.map((x) => lightHTML(x)).join(""))
       dt.setData("text/plain", run.doms.map((x) => x.textContent).join("\n"))
       hideSnapshot(dt)
       carried(run.doms, true)
@@ -810,7 +965,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     editor.view.dragging = { slice: sel.content(), move: true }
     event.dataTransfer.effectAllowed = "move"
     event.dataTransfer.clearData()
-    event.dataTransfer.setData("text/html", el.outerHTML)
+    event.dataTransfer.setData("text/html", lightHTML(el))
     event.dataTransfer.setData("text/plain", el.textContent ?? "")
     hideSnapshot(event.dataTransfer)
     startDragChrome(event, [el], r.width)

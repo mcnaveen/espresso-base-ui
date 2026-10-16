@@ -140,6 +140,9 @@ const CSS = `
   gap: 24px;
   margin: 8px 0;
 }
+.rte-doc [data-type='columns'][data-count='1'] {
+  grid-template-columns: minmax(0, 1fr);
+}
 .rte-doc [data-type='columns'][data-count='2'] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -193,8 +196,11 @@ const CSS = `
 .rte-doc [data-type='columns'][data-media='true'] [data-type='column'] > p {
   margin: 0;
 }
-.rte-doc [data-type='columns'][data-media='true'] [data-type='column'] > p + p {
-  margin-top: 8px;
+/* two pictures in one cell (one duplicated, or dropped onto another) stand
+   as far apart as the cells do (the row's 16px gap), so a grid of them is
+   even both ways: each is its own block here, not a paragraph's picture */
+.rte-doc [data-type='columns'][data-media='true'] [data-type='column'] > * + * {
+  margin-top: 16px;
 }
 .rte-doc [data-type='columns'][data-media='true'] .ProseMirror-trailingBreak {
   display: none;
@@ -584,6 +590,18 @@ ${cellTintRules}
 }
 .rte-doc [data-type='columns'][data-media='true'] .rte-media > div:not([data-sized]) {
   width: 100% !important;
+}
+
+/* a picture or an embed being resized: the drag's cursor everywhere */
+body.rte-media-resizing,
+body.rte-media-resizing * {
+  cursor: ew-resize !important;
+}
+/* a live player (an embed's frame is its own page) would take the drag's
+   moves as they pass over it, and the size would stop following */
+body.rte-media-resizing iframe,
+body.rte-media-resizing video {
+  pointer-events: none !important;
 }
 
 /* a caption under a frame: 14px gray-500, centred 8px below */

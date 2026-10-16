@@ -8,7 +8,6 @@
 import * as React from "react"
 import {
   Extension,
-  getMarkRange,
   Mark,
   mergeAttributes,
   Node,
@@ -16,7 +15,7 @@ import {
   type Editor as TiptapEditor,
 } from "@tiptap/core"
 import type { Node as PMNode } from "@tiptap/pm/model"
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
+import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
 import { CellSelection } from "@tiptap/pm/tables"
 import {
   Decoration,
@@ -29,8 +28,11 @@ import Suggestion, { type SuggestionProps } from "@tiptap/suggestion"
 import {
   AttachmentView,
   AudioView,
+  EMBED_TYPES,
   EmbedSlotView,
+  EmbedView,
   ImageSlotView,
+  VideoView,
   openEmbedSourcePopup,
   openImageSourcePopup,
   openRemoveEmbedModal,
@@ -393,37 +395,46 @@ export const LinkPaste = Extension.create({
  * gray-100 ground, 22px tall on 4px corners (.rte-link-on).
  */
 /**
- * Whether a link card is up. The ground marks the link the card is about,
- * and only while it is up: a caret merely resting in a link (a whole
- * paragraph linked, say) would otherwise sit under a gray slab.
+ * The link a link card is about, while the card is up. The ground marks it,
+ * and only it: a caret merely resting in a link (a whole paragraph linked,
+ * say) would otherwise sit under a gray slab. The card sets the range (the
+ * link it opened over, by caret or by hover) and clears it as it goes; the
+ * range rides the document's changes meanwhile.
  */
-export const LINK_ON_KEY = new PluginKey<boolean>("rteLinkOn")
+export const LINK_ON_KEY = new PluginKey<{ from: number; to: number } | null>(
+  "rteLinkOn"
+)
 
 export const LinkOn = Extension.create({
   name: "rteLinkOn",
   addProseMirrorPlugins() {
     return [
-      new Plugin<boolean>({
+      new Plugin<{ from: number; to: number } | null>({
         key: LINK_ON_KEY,
         state: {
-          init: () => false,
-          apply: (tr, open) => {
-            const next = tr.getMeta(LINK_ON_KEY) as boolean | undefined
-            return next === undefined ? open : next
+          init: () => null,
+          apply: (tr, range) => {
+            const next = tr.getMeta(LINK_ON_KEY) as
+              | { from: number; to: number }
+              | null
+              | undefined
+            if (next !== undefined) return next
+            if (!range || !tr.docChanged) return range
+            const from = tr.mapping.map(range.from, 1)
+            const to = tr.mapping.map(range.to, -1)
+            return from < to ? { from, to } : null
           },
         },
         props: {
           decorations(state) {
-            if (!LINK_ON_KEY.getState(state)) return null
-            const type = state.schema.marks.link
-            if (!type) return null
-            const { from, to, $from } = state.selection
-            const range = getMarkRange($from, type)
-            if (!range || from < range.from || to > range.to) return null
+            const range = LINK_ON_KEY.getState(state)
+            if (!range) return null
+            const size = state.doc.content.size
+            const from = Math.max(0, Math.min(range.from, size))
+            const to = Math.max(from, Math.min(range.to, size))
+            if (from === to) return null
             return DecorationSet.create(state.doc, [
-              Decoration.inline(range.from, range.to, {
-                class: "rte-link-on",
-              }),
+              Decoration.inline(from, to, { class: "rte-link-on" }),
             ])
           },
         },
@@ -794,6 +805,13 @@ export const Audio = Node.create({
 
 // an embed: any page in a frame
 // a video file, as a plain player for the carried file
+const booleanAttribute = (name: string) => ({
+  default: false,
+  parseHTML: (el: HTMLElement) => el.hasAttribute(name),
+  renderHTML: (attrs: Record<string, unknown>) =>
+    attrs[name] ? { [name]: "" } : {},
+})
+
 export const Video = Node.create({
   name: "video",
   group: "block",
@@ -803,6 +821,16 @@ export const Video = Node.create({
     return {
       src: { default: null },
       title: { default: null },
+      caption: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-caption"),
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs.caption ? { "data-caption": attrs.caption } : {},
+      },
+      autoplay: booleanAttribute("autoplay"),
+      loop: booleanAttribute("loop"),
+      muted: booleanAttribute("muted"),
+      ...embedFrameAttributes,
     }
   },
   parseHTML: () => [{ tag: "video[src]" }],
@@ -810,7 +838,91 @@ export const Video = Node.create({
     "video",
     mergeAttributes(HTMLAttributes, { controls: "true" }),
   ],
+  addNodeView() {
+    return ReactNodeViewRenderer(VideoView, {
+      // the player's own presses (play, seek, volume) stay the player's:
+      // ProseMirror taking them would select the video instead of playing it
+      stopEvent: ({ event }) =>
+        event.target instanceof HTMLVideoElement && !event.type.startsWith("drag"),
+    })
+  },
 })
+
+/**
+ * A selection the browser draws around one whole leaf block (a video, an
+ * embed, a picture) is that block selected. ProseMirror rebuilds a
+ * selection it reads back from the page as text between its ends, which
+ * for a lone atom lands on a caret beside it; Safari, nudging the
+ * selection drawn around a <video> or an <iframe>, makes ProseMirror read
+ * it back, and the video chosen a moment ago became a caret.
+ */
+/** the leaf blocks Safari will not hold a drawn selection around */
+const PLAYERS = new Set(["video", "youtube", "embed"])
+
+export const AtomSelection = Extension.create({
+  name: "rteAtomSelection",
+  addProseMirrorPlugins() {
+    // a key just pressed moved the selection itself (an arrow off the
+    // player), which is no read-back to refuse
+    let lastKey = 0
+    return [
+      new Plugin({
+        key: new PluginKey("rteAtomSelection"),
+        // Safari collapses the selection drawn around a player to a caret
+        // beside it, and ProseMirror reads that back: a selection-only step
+        // from a selected player to a bare caret at its edge, made by no
+        // click, key or scroll, is that read, and the player stays chosen
+        filterTransaction(tr, state) {
+          const was = state.selection
+          if (!(was instanceof NodeSelection) || !PLAYERS.has(was.node.type.name))
+            return true
+          if (tr.docChanged || !tr.selectionSet) return true
+          if (tr.getMeta("pointer") || tr.scrolledIntoView) return true
+          if (Date.now() - lastKey < 150) return true
+          const next = tr.selection
+          if (!(next instanceof TextSelection) || !next.empty) return true
+          const pos = next.from
+          return pos < was.from - 1 || pos > was.to + 1
+        },
+        props: {
+          handleKeyDown() {
+            lastKey = Date.now()
+            return false
+          },
+          createSelectionBetween(view, $anchor, $head) {
+            const from = Math.min($anchor.pos, $head.pos)
+            const to = Math.max($anchor.pos, $head.pos)
+            const node = view.state.doc.nodeAt(from)
+            if (!node || !node.isAtom || !node.isBlock) return null
+            if (from + node.nodeSize !== to) return null
+            if (!NodeSelection.isSelectable(node)) return null
+            return NodeSelection.create(view.state.doc, from)
+          },
+        },
+      }),
+    ]
+  },
+})
+
+/** an embed's place on the page: its width once resized, its alignment,
+ * its caption — kept alike on the embed card's node and a YouTube video */
+export const embedFrameAttributes = {
+  frameWidth: {
+    default: null,
+    parseHTML: (el: HTMLElement) => {
+      const n = Number(el.getAttribute("data-frame-width"))
+      return Number.isFinite(n) && n > 0 ? n : null
+    },
+    renderHTML: (attrs: Record<string, unknown>) =>
+      attrs.frameWidth ? { "data-frame-width": attrs.frameWidth } : {},
+  },
+  align: {
+    default: null,
+    parseHTML: (el: HTMLElement) => el.getAttribute("data-align"),
+    renderHTML: (attrs: Record<string, unknown>) =>
+      attrs.align ? { "data-align": attrs.align } : {},
+  },
+}
 
 export const Embed = Node.create({
   name: "embed",
@@ -818,7 +930,20 @@ export const Embed = Node.create({
   atom: true,
   draggable: true,
   addAttributes() {
-    return { src: { default: null }, aspectRatio: { default: null } }
+    return {
+      src: { default: null },
+      aspectRatio: { default: null },
+      title: {
+        default: null,
+        parseHTML: (el: HTMLElement) =>
+          el.getAttribute("data-title") ??
+          el.querySelector("iframe")?.getAttribute("title") ??
+          null,
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs.title ? { "data-title": attrs.title } : {},
+      },
+      ...embedFrameAttributes,
+    }
   },
   parseHTML: () => [{ tag: 'div[data-type="embed"]' }],
   renderHTML: ({ node, HTMLAttributes }) => [
@@ -830,12 +955,19 @@ export const Embed = Node.create({
         src: node.attrs.src,
         allowfullscreen: "true",
         loading: "lazy",
+        ...(node.attrs.title ? { title: node.attrs.title } : {}),
         ...(node.attrs.aspectRatio
           ? { style: `aspect-ratio: ${node.attrs.aspectRatio}` }
           : {}),
       },
     ],
+    ...(node.attrs.title
+      ? [["div", { class: "rte-media-caption" }, node.attrs.title]]
+      : []),
   ],
+  addNodeView() {
+    return ReactNodeViewRenderer(EmbedView)
+  },
 })
 
 /* ------------------------------ the slots ----------------------------------
@@ -901,17 +1033,23 @@ export const EmbedSlot = Node.create({
         (pos: number) =>
         ({ editor }) => {
           const node = editor.state.doc.nodeAt(pos)
-          if (!node || node.type.name !== "embed") return false
+          if (!node || !EMBED_TYPES.has(node.type.name)) return false
           openEmbedSourcePopup(
             editor,
             pos,
             (at: number, embed: { src: string; aspectRatio: number }) => {
               const live = editor.state.doc.nodeAt(at)
-              if (!live || live.type.name !== "embed") return
+              if (!live || !EMBED_TYPES.has(live.type.name)) return
+              // a new link is the embed card's own node, whatever stood
+              // there; its place, width and caption carry over
+              const type = editor.state.schema.nodes.embed
               editor.view.dispatch(
-                editor.state.tr.setNodeMarkup(at, undefined, {
-                  ...live.attrs,
-                  ...embed,
+                editor.state.tr.setNodeMarkup(at, type, {
+                  src: embed.src,
+                  aspectRatio: embed.aspectRatio,
+                  title: live.attrs.title ?? null,
+                  align: live.attrs.align ?? null,
+                  frameWidth: live.attrs.frameWidth ?? null,
                 })
               )
             }
@@ -922,7 +1060,7 @@ export const EmbedSlot = Node.create({
         (pos: number) =>
         ({ editor }) => {
           const node = editor.state.doc.nodeAt(pos)
-          if (!node || node.type.name !== "embed") return false
+          if (!node || !EMBED_TYPES.has(node.type.name)) return false
           openRemoveEmbedModal(editor, pos)
           return true
         },
@@ -1314,7 +1452,9 @@ export const Column = Node.create({
 export const Columns = Node.create({
   name: "columns",
   group: "block",
-  content: "column{2,4}",
+  // one column is a layout too: its blocks stacked, still carried and
+  // rearranged as a layout's; a block set beside one makes columns again
+  content: "column{1,4}",
   defining: true,
   addAttributes() {
     return {

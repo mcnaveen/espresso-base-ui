@@ -33,7 +33,7 @@ import { Placeholder } from "@tiptap/extensions"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 
 import { LinkEditor } from "./link-card"
-import { ImageView } from "./media"
+import { EmbedView, ImageView } from "./media"
 import {
   Attachment,
   LinkPaste,
@@ -46,6 +46,8 @@ import {
   Column,
   Columns,
   Embed,
+  embedFrameAttributes,
+  AtomSelection,
   EmbedSlot,
   ImageSlot,
   Limit,
@@ -267,7 +269,7 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
     if (options.columns !== false) extensions.push(Columns, Column)
     if (options.image !== false) extensions.push(ImageSlot)
     if (options.embed !== false) extensions.push(EmbedSlot)
-    extensions.push(LinkOn, LinkEditor, LinkPaste, CommentMark)
+    extensions.push(LinkOn, LinkEditor, LinkPaste, CommentMark, AtomSelection)
     if (options.callout !== false) extensions.push(Callout)
     if (options.attachment !== false) extensions.push(Attachment)
     if (options.audio !== false) extensions.push(Audio)
@@ -276,9 +278,13 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
       extensions.push(
         // the frame carries its caption, drawn centred beneath it
         Youtube.extend({
+          addNodeView() {
+            return ReactNodeViewRenderer(EmbedView)
+          },
           addAttributes() {
             return {
               ...this.parent?.(),
+              ...embedFrameAttributes,
               title: {
                 default: null,
                 parseHTML: (el: HTMLElement) =>
@@ -300,8 +306,12 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
         }).configure({ nocookie: true }),
         Video
       )
-    if (options.subscript !== false) extensions.push(Subscript)
-    if (options.superscript !== false) extensions.push(Superscript)
+    // a run is raised or lowered, never both: setting one takes the other
+    // off, or the lowered text would sit inside the raised one
+    if (options.subscript !== false)
+      extensions.push(Subscript.extend({ excludes: "subscript superscript" }))
+    if (options.superscript !== false)
+      extensions.push(Superscript.extend({ excludes: "superscript subscript" }))
     if (options.mention !== false)
       extensions.push(
         Mention.configure({

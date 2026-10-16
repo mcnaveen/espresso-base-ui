@@ -14,6 +14,23 @@ import {
   type NodeViewProps,
 } from "@tiptap/react"
 
+import { getEmbedUrlFromYoutubeUrl } from "@tiptap/extension-youtube"
+import {
+  AlignCenterIcon,
+  AlignLeftIcon,
+  AlignRightIcon,
+  CaptionsIcon,
+  CircleAlertIcon,
+  CopyPlusIcon,
+  ExternalLinkIcon,
+  PencilIcon,
+  RefreshCwIcon,
+  RepeatIcon,
+  Settings2Icon,
+  Trash2Icon,
+  VolumeXIcon,
+} from "lucide-react"
+
 import { pressHandlers, type PressEvent } from "./press"
 import { freshEmbedSlot } from "./extensions"
 import {
@@ -781,6 +798,9 @@ function RemoveEmbedModal({
   )
 }
 
+/** the nodes drawn as embeds: the embed card's own and a YouTube video */
+export const EMBED_TYPES = new Set(["embed", "youtube"])
+
 export function openRemoveEmbedModal(editor: TiptapEditor, pos: number) {
   const host = document.createElement("div")
   document.body.appendChild(host)
@@ -793,7 +813,7 @@ export function openRemoveEmbedModal(editor: TiptapEditor, pos: number) {
     <RemoveEmbedModal
       onConfirm={() => {
         const node = editor.isDestroyed ? null : editor.state.doc.nodeAt(pos)
-        if (!node || node.type.name !== "embed") return
+        if (!node || !EMBED_TYPES.has(node.type.name)) return
         editor.view.dispatch(editor.state.tr.delete(pos, pos + node.nodeSize))
       }}
       onDone={done}
@@ -1504,6 +1524,828 @@ export function ImageView(props: NodeViewProps) {
           <div className="w-full px-1 pt-2.5 text-center text-[13px] leading-[1.5] tracking-[0.015em] text-accent-foreground">
             {node.attrs.caption as string}
           </div>
+        ) : null}
+      </div>
+    </NodeViewWrapper>
+  )
+}
+
+/* ------------------------------- the embed ---------------------------------
+ * An embedded frame (a YouTube video, or any link the embed card took), as
+ * the branch's IframeNodeView draws it: the column's width on its
+ * platform's ratio unless resized, the picture's ring when selected, and
+ * the media chrome over its top-right corner, the pencil (a new link) and
+ * ⋯ with the embed's six rows: Captions, Replace, Open in Browser, Align,
+ * Duplicate, Delete. The chrome comes with the pointer; a click on the
+ * frame is the player's, and plays it at once; a press on the pencil, ⋯ or
+ * a pill chooses the embed. A frame that never loads gives way to the
+ * design's "Preview failed" box.
+ */
+const EMBED_MIN_WIDTH = 200
+const EMBED_LOAD_TIMEOUT = 15000
+
+/** the address the frame shows: a YouTube node keeps the video's link */
+function frameSrcOf(node: NodeViewProps["node"]): string {
+  const src = (node.attrs.src as string) || ""
+  if (node.type.name !== "youtube") return src
+  return (
+    getEmbedUrlFromYoutubeUrl({
+      url: src,
+      nocookie: true,
+      startAt: (node.attrs.start as number) || 0,
+    }) ?? src
+  )
+}
+
+/** the page the video is watched on, for Open in Browser */
+function browserSrcOf(node: NodeViewProps["node"]): string {
+  const src = (node.attrs.src as string) || ""
+  const m = src.match(/youtube(?:-nocookie)?\.com\/embed\/([\w-]{6,})/)
+  return m ? `https://www.youtube.com/watch?v=${m[1]}` : src
+}
+
+export function EmbedView(props: NodeViewProps) {
+  const { node, editor, selected, getPos, updateAttributes } = props
+  const editable = editor.isEditable
+  const src = (node.attrs.src as string) || ""
+  const frameSrc = frameSrcOf(node)
+  const align = (node.attrs.align as string | null) ?? "center"
+  const width = node.attrs.frameWidth as number | null
+  // stored as the CSS ratio, width over height; the video's 16:9 otherwise
+  const ratio = (node.attrs.aspectRatio as number | null) ?? 16 / 9
+  const title = (node.attrs.title as string | null) ?? ""
+  const [menuOpen, setMenuOpen] = React.useState(false)
+  const [showCaption, setShowCaption] = React.useState(Boolean(title))
+  const [caption, setCaption] = React.useState(title)
+  const [attempt, setAttempt] = React.useState(0)
+  const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+
+  // the caption follows the attribute when it changes elsewhere (undo)
+  const [syncedTitle, setSyncedTitle] = React.useState(title)
+  if (title !== syncedTitle) {
+    setSyncedTitle(title)
+    setCaption(title)
+    if (title) setShowCaption(true)
+  }
+
+  // a frame silent for a good while is given up on: the verdict belongs to
+  // the address and the attempt it was reached for, so a new one starts clean
+  const loadKey = `${attempt}|${frameSrc}`
+  const [failedKey, setFailedKey] = React.useState<string | null>(null)
+  React.useEffect(() => {
+    if (!frameSrc) return
+    timer.current = setTimeout(() => setFailedKey(loadKey), EMBED_LOAD_TIMEOUT)
+    return () => clearTimeout(timer.current)
+  }, [frameSrc, loadKey])
+  const showFailed = failedKey === loadKey || !frameSrc
+
+  const at = () => {
+    const pos = getPos()
+    return typeof pos === "number" ? pos : null
+  }
+  const selectEmbed = React.useCallback(() => {
+    const pos = getPos()
+    if (typeof pos !== "number") return
+    try {
+      editor.view.dispatch(
+        editor.view.state.tr.setSelection(
+          NodeSelection.create(editor.view.state.doc, pos)
+        )
+      )
+    } catch {
+      // the node moved out from underneath
+    }
+  }, [editor, getPos])
+
+  /* ---- the ratio-locked edge drag: the width moves, the height follows */
+  const commitWidth = (w: number) => {
+    updateAttributes({ frameWidth: Math.round(w) })
+    requestAnimationFrame(selectEmbed)
+  }
+  // the frame is found from the pressed pill, not held: the press is
+  // where the drag begins
+  const frameOf = (el: EventTarget | null) =>
+    el instanceof Element
+      ? el.closest<HTMLElement>("[data-embed-box]")
+      : null
+  const maxWidthOf = (box: HTMLElement | null) =>
+    box?.parentElement?.clientWidth || editor.view.dom.clientWidth
+  const startResize = (event: PressEvent, edge: "left" | "right") => {
+    if (!editable) return
+    event.preventDefault()
+    selectEmbed()
+    const box = frameOf(event.currentTarget)
+    if (!box) return
+    const startX = event.clientX
+    const startWidth = box.offsetWidth
+    const most = maxWidthOf(box)
+    const onMove = (ev: PointerEvent) => {
+      const delta = (ev.clientX - startX) * (edge === "left" ? -1 : 1)
+      const w = Math.max(EMBED_MIN_WIDTH, Math.min(startWidth + delta, most))
+      box.style.width = `${w}px`
+    }
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+      document.body.classList.remove("rte-media-resizing")
+      commitWidth(box.offsetWidth)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    // the class carries the resize cursor over the whole page
+    document.body.classList.add("rte-media-resizing")
+  }
+  const resizeBy = (target: EventTarget | null, delta: number) => {
+    const box = frameOf(target)
+    const current = width ?? box?.offsetWidth ?? EMBED_MIN_WIDTH * 3
+    commitWidth(
+      Math.max(EMBED_MIN_WIDTH, Math.min(current + delta, maxWidthOf(box)))
+    )
+  }
+
+  /* ---- actions */
+  const changeLink = () => {
+    const pos = at()
+    if (pos !== null) editor.commands.replaceEmbed(pos)
+  }
+  const duplicate = () => {
+    const pos = at()
+    if (pos === null) return
+    const live = editor.state.doc.nodeAt(pos)
+    if (live)
+      editor.view.dispatch(editor.state.tr.insert(pos + live.nodeSize, live))
+  }
+  const remove = () => {
+    const pos = at()
+    if (pos !== null) editor.commands.removeEmbed(pos)
+  }
+  const toggleCaption = () => {
+    const next = !showCaption
+    setShowCaption(next)
+    if (!next) {
+      setCaption("")
+      if (title) updateAttributes({ title: null })
+    }
+  }
+  const commitCaption = () => {
+    if (caption === title) return
+    updateAttributes({ title: caption || null })
+  }
+
+  const chromeVisible = (selected || menuOpen) && editable
+  const item = (
+    Icon: React.ComponentType<{ className?: string }>,
+    label: string,
+    run: () => void,
+    checked?: boolean
+  ) => (
+    <DropdownMenuItem key={label} onClick={run}>
+      <Icon className="size-4" />
+      {label}
+      {checked && <MenuCheck />}
+    </DropdownMenuItem>
+  )
+  const keepPress = {
+    onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+    onMouseDown: (e: React.MouseEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // the chrome's press chooses the embed, so its actions act on it
+      editor.view.focus()
+      selectEmbed()
+    },
+  }
+
+  return (
+    <NodeViewWrapper as="div" className="rte-media rte-embed" data-drag-handle>
+      <div
+        data-embed-box
+        className={cn(
+          "relative isolate block max-w-full rounded-lg",
+          align === "center" && "mx-auto",
+          align === "right" && "mr-0 ml-auto",
+          align === "left" && "mr-auto ml-0",
+          // the picture's ring: a 1px ink-gray-6 line 4px outside
+          selected &&
+            "ring-1 ring-[color:var(--muted-foreground)] ring-offset-4 ring-offset-[var(--background)]"
+        )}
+        style={{ width: width ? `${width}px` : "100%" }}
+        data-sized={width ? "" : undefined}
+      >
+        <div className="group/embed relative overflow-hidden rounded-lg">
+          {!showFailed ? (
+            <>
+              <iframe
+                key={attempt}
+                className="block w-full rounded-lg border-0"
+                src={frameSrc}
+                // the document's own iframe margin would gap the frame
+                style={{ aspectRatio: String(ratio), margin: 0 }}
+                title={title || "Embedded content"}
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="strict-origin-when-cross-origin"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                onLoad={() => clearTimeout(timer.current)}
+              />
+            </>
+          ) : (
+            <div
+              role="status"
+              className="flex w-full flex-col items-center justify-center gap-1.5 rounded-lg border border-border-soft bg-background px-6"
+              style={{ aspectRatio: String(ratio) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (editable) selectEmbed()
+              }}
+            >
+              <CircleAlertIcon className="size-5 text-secondary-foreground" />
+              <p className="max-w-[300px] text-center text-sm leading-[1.5] tracking-[0.02em] text-secondary-foreground">
+                We couldn’t load a preview for this content.
+                <br />
+                Check the link or try again.
+              </p>
+              {editable && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (!frameSrc) changeLink()
+                    else setAttempt((n) => n + 1)
+                  }}
+                >
+                  Try again
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* the media chrome: the pencil, then everything behind ⋯ */}
+          {/* the chrome comes with the pointer, and stays while chosen */}
+          <div
+            className={cn(
+              "absolute top-2.5 right-2.5 z-20 items-center gap-1.5",
+              chromeVisible
+                ? "flex"
+                : editable
+                  ? "hidden group-hover/embed:flex"
+                  : "hidden"
+            )}
+          >
+            <button
+              type="button"
+              className={MEDIA_CHROME_BUTTON}
+              aria-label="Change link"
+              title="Change link"
+              {...keepPress}
+              onClick={(e) => {
+                e.stopPropagation()
+                changeLink()
+              }}
+            >
+              <PencilIcon className="size-4" />
+            </button>
+            <DropdownMenu
+              open={menuOpen}
+              onOpenChange={(open) => {
+                setMenuOpen(open)
+                if (!open && editor.isEditable)
+                  setTimeout(() => {
+                    if (!editor.isDestroyed) editor.view.focus()
+                  }, 0)
+              }}
+              modal={false}
+            >
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    className={MEDIA_CHROME_BUTTON}
+                    aria-label="Media options"
+                    {...keepPress}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <DotHorizontalIcon className="size-4" />
+                  </button>
+                }
+              />
+              <DropdownMenuContent align="end" sideOffset={4}>
+                {item(CaptionsIcon, "Captions", toggleCaption, showCaption)}
+                {item(RefreshCwIcon, "Replace", changeLink)}
+                {item(ExternalLinkIcon, "Open in Browser", () => {
+                  const href = browserSrcOf(node)
+                  if (href) window.open(href, "_blank", "noopener,noreferrer")
+                })}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <AlignLeftIcon className="size-4" />
+                    Align
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {ALIGN_OPTIONS.map((option) =>
+                      item(
+                        option.value === "left"
+                          ? AlignLeftIcon
+                          : option.value === "center"
+                            ? AlignCenterIcon
+                            : AlignRightIcon,
+                        option.label,
+                        () => updateAttributes({ align: option.value }),
+                        align === option.value
+                      )
+                    )}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                {item(CopyPlusIcon, "Duplicate", duplicate)}
+                {item(Trash2Icon, "Delete", remove)}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {/* the edge pills, as on a picture */}
+          {editable && !showFailed && (
+            <>
+              {(["left", "right"] as const).map((edge) => (
+                <button
+                  key={edge}
+                  type="button"
+                  className={cn(
+                    "absolute top-1/2 z-30 h-[66px] max-h-[50%] w-3.5 -translate-y-1/2 cursor-ew-resize touch-none items-center bg-transparent",
+                    edge === "left"
+                      ? "left-0 justify-start pl-1"
+                      : "right-0 justify-end pr-1",
+                    selected ? "flex" : "hidden group-hover/embed:flex"
+                  )}
+                  aria-label={`Resize embed from ${edge} edge`}
+                  {...pressHandlers((e) => startResize(e, edge))}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      resizeBy(e.currentTarget, -20)
+                    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      resizeBy(e.currentTarget, 20)
+                    }
+                  }}
+                >
+                  <span className="pointer-events-none h-full w-[3px] rounded-full bg-[#383838] ring-1 ring-white" />
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* the caption: a centred field while editing, plain text read */}
+        {editable && showCaption && src ? (
+          <div
+            data-media-text-field
+            draggable={false}
+            className="w-full pt-1.5"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onDragStart={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+          >
+            <input
+              value={caption}
+              draggable={false}
+              className="h-7 w-full border-none bg-transparent text-center text-[13px] leading-[1.5] tracking-[0.015em] text-accent-foreground outline-none placeholder:text-card-foreground"
+              placeholder="Add a caption"
+              aria-label="Caption"
+              onChange={(e) => setCaption(e.target.value)}
+              onBlur={commitCaption}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault()
+                  ;(e.target as HTMLInputElement).blur()
+                  return
+                }
+                if (e.key !== "Enter") return
+                // Enter writes the caption and starts the line after
+                e.preventDefault()
+                commitCaption()
+                const pos = at()
+                if (pos === null) return
+                requestAnimationFrame(() => {
+                  const live = editor.state.doc.nodeAt(pos)
+                  if (!live) return
+                  const after = pos + live.nodeSize
+                  const next = editor.state.doc.nodeAt(after)
+                  if (!next?.isTextblock)
+                    editor.view.dispatch(
+                      editor.state.tr.insert(
+                        after,
+                        editor.state.schema.nodes.paragraph.create()
+                      )
+                    )
+                  editor
+                    .chain()
+                    .focus(undefined, { scrollIntoView: false })
+                    .setTextSelection(after + 1)
+                    .run()
+                })
+              }}
+            />
+          </div>
+        ) : !editable && title ? (
+          <div className="rte-media-caption">{title}</div>
+        ) : null}
+      </div>
+    </NodeViewWrapper>
+  )
+}
+
+/* -------------------------------- the video --------------------------------
+ * An uploaded video, with the media chrome a picture and an embed carry:
+ * the ring when selected, the edge pills, ⋯ with the video's six rows as
+ * the branch's MediaToolbar orders them (Caption, Replace, Align, Video
+ * settings: Autoplay, Loop, Muted; Duplicate, Delete) and the caption field
+ * beneath. The chrome comes with the pointer; a click on the video is the
+ * player's, and plays it at once. Pressing ⋯ or a pill chooses the video.
+ */
+const VIDEO_MIN_WIDTH = 160
+
+/**
+ * An upload is kept in the document as its data, and a player handed that
+ * string (megabytes of it) decodes slowly in Safari and holds the whole of
+ * it again. The player plays a blob made from it once instead, shared by
+ * every copy of the same video; the document keeps the data.
+ */
+const playableUrls = new Map<string, Promise<string>>()
+/** the blobs already made: a player drawn again (moved, undone) has its own
+ * at once, with no frame of black while it is looked up */
+const madeUrls = new Map<string, string>()
+function playableUrl(src: string): Promise<string> {
+  if (!src.startsWith("data:")) return Promise.resolve(src)
+  let url = playableUrls.get(src)
+  if (!url) {
+    url = fetch(src)
+      .then((r) => r.blob())
+      .then((blob) => {
+        const made = URL.createObjectURL(blob)
+        madeUrls.set(src, made)
+        return made
+      })
+      .catch(() => src)
+    playableUrls.set(src, url)
+  }
+  return url
+}
+function usePlayableSrc(src: string): string | undefined {
+  const [ready, setReady] = React.useState<{ src: string; url: string } | null>(
+    () => {
+      if (!src) return null
+      if (!src.startsWith("data:")) return { src, url: src }
+      const made = madeUrls.get(src)
+      return made ? { src, url: made } : null
+    }
+  )
+  React.useEffect(() => {
+    if (!src) return
+    let live = true
+    void playableUrl(src).then((url) => {
+      if (live) setReady({ src, url })
+    })
+    return () => {
+      live = false
+    }
+  }, [src])
+  return ready && ready.src === src ? ready.url : undefined
+}
+
+export function VideoView(props: NodeViewProps) {
+  const { node, editor, selected, getPos, updateAttributes, deleteNode } =
+    props
+  const editable = editor.isEditable
+  const src = (node.attrs.src as string) || ""
+  const playable = usePlayableSrc(src)
+  const align = (node.attrs.align as string | null) ?? "center"
+  const width = node.attrs.frameWidth as number | null
+  const autoplay = Boolean(node.attrs.autoplay)
+  const loop = Boolean(node.attrs.loop)
+  const muted = Boolean(node.attrs.muted)
+  const stored = (node.attrs.caption as string | null) ?? ""
+  const [menuOpen, setMenuOpen] = React.useState(false)
+  const [showCaption, setShowCaption] = React.useState(Boolean(stored))
+  const [caption, setCaption] = React.useState(stored)
+  const [syncedCaption, setSyncedCaption] = React.useState(stored)
+  if (stored !== syncedCaption) {
+    setSyncedCaption(stored)
+    setCaption(stored)
+    if (stored) setShowCaption(true)
+  }
+
+  const at = () => {
+    const pos = getPos()
+    return typeof pos === "number" ? pos : null
+  }
+  const selectVideo = React.useCallback(() => {
+    const pos = getPos()
+    if (typeof pos !== "number") return
+    try {
+      editor.view.dispatch(
+        editor.view.state.tr.setSelection(
+          NodeSelection.create(editor.view.state.doc, pos)
+        )
+      )
+    } catch {
+      // the node moved out from underneath
+    }
+  }, [editor, getPos])
+
+  /* ---- the edge drag: the width moves, the player keeps its own shape */
+  const frameOf = (el: EventTarget | null) =>
+    el instanceof Element ? el.closest<HTMLElement>("[data-video-box]") : null
+  const maxWidthOf = (box: HTMLElement | null) =>
+    box?.parentElement?.clientWidth || editor.view.dom.clientWidth
+  const commitWidth = (w: number) => {
+    updateAttributes({ frameWidth: Math.round(w) })
+    requestAnimationFrame(selectVideo)
+  }
+  const startResize = (event: PressEvent, edge: "left" | "right") => {
+    if (!editable) return
+    event.preventDefault()
+    selectVideo()
+    const box = frameOf(event.currentTarget)
+    if (!box) return
+    const startX = event.clientX
+    const startWidth = box.offsetWidth
+    const most = maxWidthOf(box)
+    const onMove = (ev: PointerEvent) => {
+      const delta = (ev.clientX - startX) * (edge === "left" ? -1 : 1)
+      box.style.width = `${Math.max(VIDEO_MIN_WIDTH, Math.min(startWidth + delta, most))}px`
+    }
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+      document.body.classList.remove("rte-media-resizing")
+      commitWidth(box.offsetWidth)
+    }
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    document.body.classList.add("rte-media-resizing")
+  }
+  const resizeBy = (target: EventTarget | null, delta: number) => {
+    const box = frameOf(target)
+    const current = width ?? box?.offsetWidth ?? VIDEO_MIN_WIDTH * 3
+    commitWidth(
+      Math.max(VIDEO_MIN_WIDTH, Math.min(current + delta, maxWidthOf(box)))
+    )
+  }
+
+  /* ---- actions */
+  const replace = async () => {
+    const [file] = await pickFiles({ accept: "video/*" })
+    if (!file) return
+    const next = await readAsDataURL(file)
+    updateAttributes({ src: next, title: file.name })
+  }
+  const duplicate = () => {
+    const pos = at()
+    if (pos === null) return
+    const live = editor.state.doc.nodeAt(pos)
+    if (live)
+      editor.view.dispatch(editor.state.tr.insert(pos + live.nodeSize, live))
+  }
+  const toggleCaption = () => {
+    const next = !showCaption
+    setShowCaption(next)
+    if (!next) {
+      setCaption("")
+      if (stored) updateAttributes({ caption: null })
+    }
+  }
+  const commitCaption = () => {
+    if (caption === stored) return
+    updateAttributes({ caption: caption || null })
+  }
+
+  const chromeVisible = (selected || menuOpen) && editable
+  const item = (
+    Icon: React.ComponentType<{ className?: string }>,
+    label: string,
+    run: () => void,
+    checked?: boolean
+  ) => (
+    <DropdownMenuItem key={label} onClick={run}>
+      <Icon className="size-4" />
+      {label}
+      {checked && <MenuCheck />}
+    </DropdownMenuItem>
+  )
+
+  return (
+    <NodeViewWrapper as="div" className="rte-media rte-video" data-drag-handle>
+      <div
+        data-video-box
+        className={cn(
+          "relative isolate block max-w-full rounded-lg",
+          align === "center" && "mx-auto",
+          align === "right" && "mr-0 ml-auto",
+          align === "left" && "mr-auto ml-0",
+          selected &&
+            "ring-1 ring-[color:var(--muted-foreground)] ring-offset-4 ring-offset-[var(--background)]"
+        )}
+        style={{ width: width ? `${width}px` : "100%" }}
+        data-sized={width ? "" : undefined}
+      >
+        <div className="group/video relative overflow-hidden rounded-lg">
+          <video
+            className="block w-full rounded-lg bg-black"
+            // the document's own media margin would gap the frame
+            style={{ margin: 0, aspectRatio: playable ? undefined : "16 / 9" }}
+            src={playable}
+            title={(node.attrs.title as string | null) ?? undefined}
+            controls
+            playsInline
+            preload="metadata"
+            autoPlay={autoplay}
+            loop={loop}
+            muted={muted}
+          />
+          {/* the chrome comes with the pointer, and stays while chosen */}
+          <div
+            className={cn(
+              "absolute top-2.5 right-2.5 z-20 items-center gap-1.5",
+              chromeVisible
+                ? "flex"
+                : editable
+                  ? "hidden group-hover/video:flex"
+                  : "hidden"
+            )}
+          >
+            <DropdownMenu
+              open={menuOpen}
+              onOpenChange={(open) => {
+                setMenuOpen(open)
+                // closed, the keys go back to the document, not the button
+                if (!open && editor.isEditable)
+                  setTimeout(() => {
+                    if (!editor.isDestroyed) editor.view.focus()
+                  }, 0)
+              }}
+              modal={false}
+            >
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    className={MEDIA_CHROME_BUTTON}
+                    aria-label="Media options"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      editor.view.focus()
+                      selectVideo()
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <DotHorizontalIcon className="size-4" />
+                  </button>
+                }
+              />
+              <DropdownMenuContent align="end" sideOffset={4}>
+                {item(CaptionsIcon, "Caption", toggleCaption, showCaption)}
+                {item(RefreshCwIcon, "Replace", () => void replace())}
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <AlignLeftIcon className="size-4" />
+                    Align
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {ALIGN_OPTIONS.map((option) =>
+                      item(
+                        option.value === "left"
+                          ? AlignLeftIcon
+                          : option.value === "center"
+                            ? AlignCenterIcon
+                            : AlignRightIcon,
+                        option.label,
+                        () => updateAttributes({ align: option.value }),
+                        align === option.value
+                      )
+                    )}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <Settings2Icon className="size-4" />
+                    Video settings
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {item(PlayIcon, "Autoplay", () => updateAttributes({ autoplay: !autoplay }), autoplay)}
+                    {item(RepeatIcon, "Loop", () => updateAttributes({ loop: !loop }), loop)}
+                    {item(VolumeXIcon, "Muted", () => updateAttributes({ muted: !muted }), muted)}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                {item(CopyPlusIcon, "Duplicate", duplicate)}
+                {item(Trash2Icon, "Delete", () => deleteNode())}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          {editable && (
+            <>
+              {(["left", "right"] as const).map((edge) => (
+                <button
+                  key={edge}
+                  type="button"
+                  className={cn(
+                    "absolute top-1/2 z-30 h-[66px] max-h-[50%] w-3.5 -translate-y-1/2 cursor-ew-resize touch-none items-center bg-transparent",
+                    edge === "left"
+                      ? "left-0 justify-start pl-1"
+                      : "right-0 justify-end pr-1",
+                    selected ? "flex" : "hidden group-hover/video:flex"
+                  )}
+                  aria-label={`Resize video from ${edge} edge`}
+                  {...pressHandlers((e) => startResize(e, edge))}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      resizeBy(e.currentTarget, -20)
+                    } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      resizeBy(e.currentTarget, 20)
+                    }
+                  }}
+                >
+                  <span className="pointer-events-none h-full w-[3px] rounded-full bg-[#383838] ring-1 ring-white" />
+                </button>
+              ))}
+            </>
+          )}
+        </div>
+
+        {editable && showCaption ? (
+          <div
+            data-media-text-field
+            draggable={false}
+            className="w-full pt-1.5"
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+            onDragStart={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }}
+          >
+            <input
+              value={caption}
+              draggable={false}
+              className="h-7 w-full border-none bg-transparent text-center text-[13px] leading-[1.5] tracking-[0.015em] text-accent-foreground outline-none placeholder:text-card-foreground"
+              placeholder="Add a caption"
+              aria-label="Caption"
+              onChange={(e) => setCaption(e.target.value)}
+              onBlur={commitCaption}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault()
+                  ;(e.target as HTMLInputElement).blur()
+                  return
+                }
+                if (e.key !== "Enter") return
+                e.preventDefault()
+                commitCaption()
+                const pos = at()
+                if (pos === null) return
+                requestAnimationFrame(() => {
+                  const live = editor.state.doc.nodeAt(pos)
+                  if (!live) return
+                  const after = pos + live.nodeSize
+                  const next = editor.state.doc.nodeAt(after)
+                  if (!next?.isTextblock)
+                    editor.view.dispatch(
+                      editor.state.tr.insert(
+                        after,
+                        editor.state.schema.nodes.paragraph.create()
+                      )
+                    )
+                  editor
+                    .chain()
+                    .focus(undefined, { scrollIntoView: false })
+                    .setTextSelection(after + 1)
+                    .run()
+                })
+              }}
+            />
+          </div>
+        ) : !editable && stored ? (
+          <div className="rte-media-caption">{stored}</div>
         ) : null}
       </div>
     </NodeViewWrapper>
