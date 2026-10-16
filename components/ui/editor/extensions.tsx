@@ -8,7 +8,6 @@
 import * as React from "react"
 import {
   Extension,
-  getMarkRange,
   Mark,
   mergeAttributes,
   Node,
@@ -395,37 +394,46 @@ export const LinkPaste = Extension.create({
  * gray-100 ground, 22px tall on 4px corners (.rte-link-on).
  */
 /**
- * Whether a link card is up. The ground marks the link the card is about,
- * and only while it is up: a caret merely resting in a link (a whole
- * paragraph linked, say) would otherwise sit under a gray slab.
+ * The link a link card is about, while the card is up. The ground marks it,
+ * and only it: a caret merely resting in a link (a whole paragraph linked,
+ * say) would otherwise sit under a gray slab. The card sets the range (the
+ * link it opened over, by caret or by hover) and clears it as it goes; the
+ * range rides the document's changes meanwhile.
  */
-export const LINK_ON_KEY = new PluginKey<boolean>("rteLinkOn")
+export const LINK_ON_KEY = new PluginKey<{ from: number; to: number } | null>(
+  "rteLinkOn"
+)
 
 export const LinkOn = Extension.create({
   name: "rteLinkOn",
   addProseMirrorPlugins() {
     return [
-      new Plugin<boolean>({
+      new Plugin<{ from: number; to: number } | null>({
         key: LINK_ON_KEY,
         state: {
-          init: () => false,
-          apply: (tr, open) => {
-            const next = tr.getMeta(LINK_ON_KEY) as boolean | undefined
-            return next === undefined ? open : next
+          init: () => null,
+          apply: (tr, range) => {
+            const next = tr.getMeta(LINK_ON_KEY) as
+              | { from: number; to: number }
+              | null
+              | undefined
+            if (next !== undefined) return next
+            if (!range || !tr.docChanged) return range
+            const from = tr.mapping.map(range.from, 1)
+            const to = tr.mapping.map(range.to, -1)
+            return from < to ? { from, to } : null
           },
         },
         props: {
           decorations(state) {
-            if (!LINK_ON_KEY.getState(state)) return null
-            const type = state.schema.marks.link
-            if (!type) return null
-            const { from, to, $from } = state.selection
-            const range = getMarkRange($from, type)
-            if (!range || from < range.from || to > range.to) return null
+            const range = LINK_ON_KEY.getState(state)
+            if (!range) return null
+            const size = state.doc.content.size
+            const from = Math.max(0, Math.min(range.from, size))
+            const to = Math.max(from, Math.min(range.to, size))
+            if (from === to) return null
             return DecorationSet.create(state.doc, [
-              Decoration.inline(range.from, range.to, {
-                class: "rte-link-on",
-              }),
+              Decoration.inline(from, to, { class: "rte-link-on" }),
             ])
           },
         },

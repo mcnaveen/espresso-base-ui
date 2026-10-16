@@ -1,13 +1,13 @@
 "use client"
 
-// The link card (31823:54797, 31823:54816) over the selection, and the
-// `openLinkEditor` command that raises it — the one command the toolbar's
-// and the floating bar's Link buttons, ⌘K and a click on a link all run,
-// so every way in shows the same card. A 36px card on a 12px radius, 4px
-// in, under the xl shadow: the subtle input at 28px — the globe, 8, the
-// address — and a 28px ghost button beside it. Over a link the address is
-// read and the button is the pencil; editing, the address is live and the
-// button unlinks. A new link opens straight into editing with no button.
+// The link card (31823:54797, 31823:54816) over a link, and the
+// `openLinkEditor` command that raises it over the selection (the
+// toolbar's and the floating bar's Link buttons and ⌘K). A 36px card on a
+// 12px radius, 4px in, under the xl shadow: the subtle input at 28px (the
+// globe, 8, the address) and a 28px ghost button beside it. The address is
+// always the one to change: a click in it edits, Enter keeps it, Escape
+// leaves it. Over a link the button unlinks; a new link has none. Hovering
+// a link raises the same card over it; a click on a link goes to its page.
 import * as React from "react"
 import { createRoot } from "react-dom/client"
 import { Extension, getMarkRange, type Editor as TiptapEditor } from "@tiptap/core"
@@ -16,7 +16,6 @@ import { Plugin, PluginKey } from "@tiptap/pm/state"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import {
-  EditIcon,
   GlobeIcon,
   LinkBrokenIcon,
 } from "@/components/ui/rich-text-editor-icons"
@@ -47,23 +46,26 @@ const isValid = (href: string) => {
 
 export function LinkCard({
   href,
-  startInEdit,
+  autoFocus,
   onUpdateHref,
   onClose,
+  onEngage,
 }: {
   href: string
-  /** open straight into editing; otherwise a link is read first */
-  startInEdit?: boolean
+  /** the address takes the focus as the card opens (a card asked for) */
+  autoFocus?: boolean
   onUpdateHref: (href: string) => void
   onClose: () => void
+  /** the address is being edited: a hover card stays while it is */
+  onEngage?: () => void
 }) {
   const [value, setValue] = React.useState(href)
-  const [edit, setEdit] = React.useState(startInEdit ?? !href)
   const [shake, setShake] = React.useState(false)
   const inputRef = React.useRef<HTMLInputElement>(null)
 
   const submit = () => {
     const next = normalize(value)
+    if (next === href) return onClose()
     if (next === "" || isValid(next)) onUpdateHref(next)
     else {
       setShake(false)
@@ -71,7 +73,8 @@ export function LinkCard({
     }
   }
 
-  const focusInput = React.useCallback(() => {
+  React.useEffect(() => {
+    if (!autoFocus) return
     requestAnimationFrame(() => {
       const el = inputRef.current
       if (!el) return
@@ -80,30 +83,19 @@ export function LinkCard({
       el.focus({ preventScroll: true })
       el.select()
     })
-  }, [])
+  }, [autoFocus])
 
-  React.useEffect(() => {
-    if (edit) focusInput()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Escape is the card's: editing a link it steps back to reading;
-  // otherwise it closes
+  // Escape is the card's: it goes, the address as it was
   React.useEffect(() => {
     const onKeydown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
       e.preventDefault()
       e.stopPropagation()
-      if (edit && href) {
-        setValue(href)
-        setEdit(false)
-        return
-      }
       onClose()
     }
     document.addEventListener("keydown", onKeydown, true)
     return () => document.removeEventListener("keydown", onKeydown, true)
-  }, [edit, href, onClose])
+  }, [onClose])
 
   const ghostBtn =
     "flex size-7 shrink-0 items-center justify-center rounded-md text-secondary-foreground transition-colors hover:bg-secondary [&>svg]:size-4"
@@ -123,20 +115,15 @@ export function LinkCard({
           ref={inputRef}
           size="sm"
           variant="subtle"
-          className={cn(
-            "w-full pl-8",
-            !edit && "cursor-pointer hover:underline"
-          )}
+          className="w-full pl-8"
           placeholder="Paste or type a link"
-          readOnly={!edit}
-          aria-label={edit ? "Link address" : "Open link"}
-          title={edit ? undefined : "Open link"}
-          onClick={() => {
-            // read, the address is the way to the page
-            if (!edit && href) window.open(href, "_blank", "noopener,noreferrer")
-          }}
+          aria-label="Link address"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onFocus={onEngage}
+          onChange={(e) => {
+            setValue(e.target.value)
+            onEngage?.()
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault()
@@ -145,22 +132,11 @@ export function LinkCard({
           }}
         />
       </div>
-      {!edit ? (
-        <button
-          type="button"
-          aria-label="Edit link"
-          className={ghostBtn}
-          onClick={() => {
-            setEdit(true)
-            focusInput()
-          }}
-        >
-          <EditIcon />
-        </button>
-      ) : href ? (
+      {href ? (
         <button
           type="button"
           aria-label="Remove link"
+          title="Remove link"
           className={ghostBtn}
           onClick={() => onUpdateHref("")}
         >
@@ -193,76 +169,92 @@ function selectionRect(editor: TiptapEditor, range: Range): DOMRect {
   return new DOMRect(left, top, Math.max(right - left, 0), bottom - top)
 }
 
+type LinkPopup = {
+  /** the address to set, `''` to unlink, or `null` when the card was left */
+  done: Promise<string | null>
+  close: () => void
+  /** the card's box, for a hover's way across to it */
+  host: HTMLElement
+  /** the address has been taken up: a hover card no longer leaves by itself */
+  engaged: () => boolean
+}
+
 /**
- * Resolves with the address to set, `''` to unlink, or `null` when the
- * card was left — never rejects.
+ * The card over `range`, placed above it (below when there is no room).
+ * Asked for (the Link button, ⌘K) it takes the focus; raised by a hover it
+ * waits to be clicked into. Never rejects.
  */
 function openLinkPopup(args: {
   editor: TiptapEditor
   href: string | null
-  startInEdit: boolean
+  autoFocus: boolean
   range: Range
-}): Promise<string | null> {
+}): LinkPopup {
   const { editor } = args
-  return new Promise<string | null>((resolve) => {
-    let settled = false
-    const host = document.createElement("div")
-    host.className = "fixed z-70"
-    document.body.appendChild(host)
-    const root = createRoot(host)
+  let settled = false
+  let engaged = args.autoFocus
+  let resolve: (value: string | null) => void = () => {}
+  const done = new Promise<string | null>((r) => (resolve = r))
+  const host = document.createElement("div")
+  host.className = "fixed z-70"
+  document.body.appendChild(host)
+  const root = createRoot(host)
 
-    const ground = (on: boolean) => {
-      if (editor.isDestroyed) return
-      editor.view.dispatch(editor.state.tr.setMeta(LINK_ON_KEY, on))
+  const ground = (on: boolean) => {
+    if (editor.isDestroyed) return
+    const range = on ? mapRange(editor, args.range) : null
+    editor.view.dispatch(editor.state.tr.setMeta(LINK_ON_KEY, range))
+  }
+  const settle = (value: string | null) => {
+    if (settled) return
+    settled = true
+    ground(false)
+    document.removeEventListener("pointerdown", onDown, true)
+    window.removeEventListener("scroll", position, true)
+    window.removeEventListener("resize", position)
+    root.unmount()
+    host.remove()
+    resolve(value)
+  }
+  const onDown = (e: PointerEvent) => {
+    if (e.target instanceof Node && host.contains(e.target)) return
+    settle(null)
+  }
+  const position = () => {
+    if (settled || editor.isDestroyed) return
+    try {
+      const rect = selectionRect(editor, args.range)
+      const box = host.firstElementChild?.getBoundingClientRect()
+      const height = box?.height ?? 36
+      const above = rect.top - 8 - height
+      host.style.left = `${Math.max(8, rect.left)}px`
+      host.style.top = `${above >= 8 ? above : rect.bottom + 8}px`
+    } catch {
+      // the document moved out from underneath; keep the last place
     }
-    const settle = (value: string | null) => {
-      if (settled) return
-      settled = true
-      ground(false)
-      document.removeEventListener("pointerdown", onDown, true)
-      window.removeEventListener("scroll", position, true)
-      window.removeEventListener("resize", position)
-      root.unmount()
-      host.remove()
-      resolve(value)
-    }
-    const onDown = (e: PointerEvent) => {
-      if (e.target instanceof Node && host.contains(e.target)) return
-      settle(null)
-    }
-    const position = () => {
-      if (settled || editor.isDestroyed) return
-      try {
-        const rect = selectionRect(editor, args.range)
-        const box = host.firstElementChild?.getBoundingClientRect()
-        const height = box?.height ?? 36
-        const above = rect.top - 8 - height
-        host.style.left = `${Math.max(8, rect.left)}px`
-        host.style.top = `${above >= 8 ? above : rect.bottom + 8}px`
-      } catch {
-        // the document moved out from underneath; keep the last place
-      }
-    }
-    document.addEventListener("pointerdown", onDown, true)
-    window.addEventListener("scroll", position, true)
-    window.addEventListener("resize", position)
-    ground(true)
+  }
+  document.addEventListener("pointerdown", onDown, true)
+  window.addEventListener("scroll", position, true)
+  window.addEventListener("resize", position)
+  ground(true)
 
-    root.render(
-      <LinkCard
-        href={args.href ?? ""}
-        startInEdit={args.startInEdit}
-        onUpdateHref={(href) => settle(href)}
-        onClose={() => {
-          settle(null)
-          if (!editor.isDestroyed)
-            editor.commands.focus(undefined, { scrollIntoView: false })
-        }}
-      />
-    )
-    position()
-    requestAnimationFrame(position)
-  })
+  root.render(
+    <LinkCard
+      href={args.href ?? ""}
+      autoFocus={args.autoFocus}
+      onEngage={() => (engaged = true)}
+      onUpdateHref={(href) => settle(href)}
+      onClose={() => {
+        const asked = args.autoFocus
+        settle(null)
+        if (asked && !editor.isDestroyed)
+          editor.commands.focus(undefined, { scrollIntoView: false })
+      }}
+    />
+  )
+  position()
+  requestAnimationFrame(position)
+  return { done, close: () => settle(null), host, engaged: () => engaged }
 }
 
 /** `''` unlinks; an address sets it. Stored marks go, so typing on is plain. */
@@ -295,7 +287,7 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     rteLinkEditor: {
       /** raise the link card over the selection, or the link the caret is in */
-      openLinkEditor: (options?: { startInEdit?: boolean }) => ReturnType
+      openLinkEditor: () => ReturnType
     }
   }
 }
@@ -305,7 +297,7 @@ export const LinkEditor = Extension.create({
   addCommands() {
     return {
       openLinkEditor:
-        (options) =>
+        () =>
         ({ editor }) => {
           const { state } = editor
           const markType = state.schema.marks.link
@@ -330,15 +322,11 @@ export const LinkEditor = Extension.create({
             (editor.getAttributes("link").href as string | undefined) || null
 
           const show = () => {
-            void openLinkPopup({
-              editor,
-              href: existing,
-              startInEdit: options?.startInEdit ?? !existing,
-              range,
-            }).then((href) => {
-              if (href === null || editor.isDestroyed) return
-              applyLink(editor, range, href)
-            })
+            void openLinkPopup({ editor, href: existing, autoFocus: true, range })
+              .done.then((href) => {
+                if (href === null || editor.isDestroyed) return
+                applyLink(editor, range, href)
+              })
           }
           if (delay) requestAnimationFrame(show)
           else show()
@@ -353,29 +341,130 @@ export const LinkEditor = Extension.create({
   },
 })
 
+/** how long the pointer rests on a link before its card comes */
+const HOVER_OPEN = 350
+/** how long the card waits once the pointer has left link and card both */
+const HOVER_CLOSE = 250
+
 /**
- * A click on a link goes to its page, in a new tab. Taken through the
- * editor's own click handling (ProseMirror calls it on a real click, no
- * drag) rather than the raw DOM click, which a contenteditable can swallow.
- * Read-only, the browser follows the link itself. The card is still a
- * Link button or ⌘K away for changing the address.
+ * A link in the document, edited in place.
+ *
+ * A click goes to its page, in a new tab, through the editor's own click
+ * handling (ProseMirror calls it on a real click, no drag), not the raw
+ * DOM click a contenteditable can swallow. Read-only, the browser follows
+ * the link itself.
+ *
+ * A hover raises the link card over the link: the address to change and
+ * the button that unlinks. It leaves as the pointer leaves link and card
+ * both, unless the address has been taken up. With text selected the
+ * selection's own bar is the one up, and no card comes over it.
  */
 export function LinkClickCard({ editor }: { editor: TiptapEditor }) {
   React.useEffect(() => {
     if (editor.isDestroyed) return
+    const view = editor.view
+    let card: (LinkPopup & { link: Element }) | null = null
+    let openTimer: ReturnType<typeof setTimeout> | undefined
+    let closeTimer: ReturnType<typeof setTimeout> | undefined
+    let pending: Element | null = null
+
+    const closeCard = () => {
+      clearTimeout(closeTimer)
+      card?.close()
+      card = null
+    }
+    const scheduleClose = () => {
+      clearTimeout(closeTimer)
+      closeTimer = setTimeout(() => {
+        if (card && !card.engaged()) closeCard()
+      }, HOVER_CLOSE)
+    }
+    const linkOf = (target: EventTarget | null) => {
+      const el = target instanceof Element ? target : null
+      const link = el?.closest("a[href]:not([data-attachment])") ?? null
+      return link && view.dom.contains(link) ? link : null
+    }
+    const rangeOf = (link: Element) => {
+      let pos: number
+      try {
+        pos = view.posAtDOM(link, 0)
+      } catch {
+        return null
+      }
+      const type = editor.state.schema.marks.link
+      if (!type) return null
+      const $pos = editor.state.doc.resolve(Math.min(pos + 1, editor.state.doc.content.size))
+      return getMarkRange($pos, type) ?? null
+    }
+    const raise = (link: Element) => {
+      const range = rangeOf(link)
+      const href = link.getAttribute("href")
+      if (!range || !href) return
+      closeCard()
+      const popup = openLinkPopup({ editor, href, autoFocus: false, range })
+      card = { ...popup, link }
+      popup.host.addEventListener("mouseenter", () => clearTimeout(closeTimer))
+      popup.host.addEventListener("mouseleave", scheduleClose)
+      void popup.done.then((next) => {
+        if (card?.host === popup.host) card = null
+        if (next === null || editor.isDestroyed) return
+        applyLink(editor, range, next)
+      })
+    }
+
+    const onOver = (event: MouseEvent) => {
+      if (!view.editable || event.buttons !== 0) return
+      const link = linkOf(event.target)
+      if (!link) return
+      // a selection has its own bar; the card does not come over it
+      if (!editor.state.selection.empty) return
+      if (card?.link === link) {
+        clearTimeout(closeTimer)
+        return
+      }
+      if (pending === link) return
+      pending = link
+      clearTimeout(openTimer)
+      openTimer = setTimeout(() => {
+        pending = null
+        if (!editor.state.selection.empty || editor.isDestroyed) return
+        if (!link.isConnected) return
+        raise(link)
+      }, HOVER_OPEN)
+    }
+    const onOut = (event: MouseEvent) => {
+      const link = linkOf(event.target)
+      if (!link) return
+      const to = event.relatedTarget
+      if (to instanceof Node && (link.contains(to) || card?.host.contains(to))) return
+      if (pending === link) {
+        pending = null
+        clearTimeout(openTimer)
+      }
+      if (card?.link === link) scheduleClose()
+    }
+    // a press in the document (a selection begun, a caret placed) sends it
+    const onDown = () => {
+      clearTimeout(openTimer)
+      pending = null
+    }
+
+    view.dom.addEventListener("mouseover", onOver)
+    view.dom.addEventListener("mouseout", onOut)
+    view.dom.addEventListener("mousedown", onDown)
+
     const key = new PluginKey("rteLinkClick")
     editor.registerPlugin(
       new Plugin({
         key,
         props: {
-          handleClick(view, _pos, event) {
-            if (!view.editable || event.button !== 0) return false
-            const target = event.target instanceof Element ? event.target : null
-            const link = target?.closest?.("a[href]:not([data-attachment])")
-            if (!link || !view.dom.contains(link)) return false
-            const href = link.getAttribute("href")
+          handleClick(v, _pos, event) {
+            if (!v.editable || event.button !== 0) return false
+            const link = linkOf(event.target)
+            const href = link?.getAttribute("href")
             if (!href) return false
             event.preventDefault()
+            closeCard()
             window.open(href, "_blank", "noopener,noreferrer")
             return true
           },
@@ -383,6 +472,11 @@ export function LinkClickCard({ editor }: { editor: TiptapEditor }) {
       })
     )
     return () => {
+      clearTimeout(openTimer)
+      closeCard()
+      view.dom.removeEventListener("mouseover", onOver)
+      view.dom.removeEventListener("mouseout", onOut)
+      view.dom.removeEventListener("mousedown", onDown)
       if (!editor.isDestroyed) editor.unregisterPlugin(key)
     }
   }, [editor])
