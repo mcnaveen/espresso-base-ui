@@ -193,7 +193,9 @@ const CSS = `
 .rte-doc [data-type='columns'][data-media='true'] [data-type='column'] > p {
   margin: 0;
 }
-.rte-doc [data-type='columns'][data-media='true'] [data-type='column'] > p + p {
+/* two pictures in one cell (one duplicated, or dropped onto another) stand
+   8px apart: each is its own block here, not a paragraph's picture */
+.rte-doc [data-type='columns'][data-media='true'] [data-type='column'] > * + * {
   margin-top: 8px;
 }
 .rte-doc [data-type='columns'][data-media='true'] .ProseMirror-trailingBreak {

@@ -1533,9 +1533,10 @@ export function ImageView(props: NodeViewProps) {
  * platform's ratio unless resized, the picture's ring when selected, and
  * the media chrome over its top-right corner, the pencil (a new link) and
  * ⋯ with the embed's six rows: Captions, Replace, Open in Browser, Align,
- * Duplicate, Delete. Editing, a clear sheet over the frame takes the press,
- * so a click selects the embed rather than playing it. A frame that never
- * loads gives way to the design's "Preview failed" box.
+ * Duplicate, Delete. Editing, the first click selects the embed (a clear
+ * sheet over the frame takes it); selected, the sheet steps aside and the
+ * next click plays. A frame that never loads gives way to the design's
+ * "Preview failed" box.
  */
 const EMBED_MIN_WIDTH = 200
 const EMBED_LOAD_TIMEOUT = 15000
@@ -1736,7 +1737,7 @@ export function EmbedView(props: NodeViewProps) {
                 key={attempt}
                 className={cn(
                   "block w-full rounded-lg border-0",
-                  editable && "pointer-events-none"
+                  editable && !selected && "pointer-events-none"
                 )}
                 src={frameSrc}
                 // the document's own iframe margin would gap the frame
@@ -1748,8 +1749,10 @@ export function EmbedView(props: NodeViewProps) {
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 onLoad={() => clearTimeout(timer.current)}
               />
-              {/* editing, the sheet takes the press: a click selects */}
-              {editable && (
+              {/* editing, the first press selects the embed; once it is
+                  selected the sheet steps aside and the next press reaches
+                  the frame itself, to play */}
+              {editable && !selected && (
                 <div
                   className="absolute inset-0 z-10 cursor-pointer"
                   onClick={(e) => {
