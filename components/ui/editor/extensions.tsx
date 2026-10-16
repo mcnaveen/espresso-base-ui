@@ -29,7 +29,9 @@ import Suggestion, { type SuggestionProps } from "@tiptap/suggestion"
 import {
   AttachmentView,
   AudioView,
+  EMBED_TYPES,
   EmbedSlotView,
+  EmbedView,
   ImageSlotView,
   openEmbedSourcePopup,
   openImageSourcePopup,
@@ -812,13 +814,46 @@ export const Video = Node.create({
   ],
 })
 
+/** an embed's place on the page: its width once resized, its alignment,
+ * its caption — kept alike on the embed card's node and a YouTube video */
+export const embedFrameAttributes = {
+  frameWidth: {
+    default: null,
+    parseHTML: (el: HTMLElement) => {
+      const n = Number(el.getAttribute("data-frame-width"))
+      return Number.isFinite(n) && n > 0 ? n : null
+    },
+    renderHTML: (attrs: Record<string, unknown>) =>
+      attrs.frameWidth ? { "data-frame-width": attrs.frameWidth } : {},
+  },
+  align: {
+    default: null,
+    parseHTML: (el: HTMLElement) => el.getAttribute("data-align"),
+    renderHTML: (attrs: Record<string, unknown>) =>
+      attrs.align ? { "data-align": attrs.align } : {},
+  },
+}
+
 export const Embed = Node.create({
   name: "embed",
   group: "block",
   atom: true,
   draggable: true,
   addAttributes() {
-    return { src: { default: null }, aspectRatio: { default: null } }
+    return {
+      src: { default: null },
+      aspectRatio: { default: null },
+      title: {
+        default: null,
+        parseHTML: (el: HTMLElement) =>
+          el.getAttribute("data-title") ??
+          el.querySelector("iframe")?.getAttribute("title") ??
+          null,
+        renderHTML: (attrs: Record<string, unknown>) =>
+          attrs.title ? { "data-title": attrs.title } : {},
+      },
+      ...embedFrameAttributes,
+    }
   },
   parseHTML: () => [{ tag: 'div[data-type="embed"]' }],
   renderHTML: ({ node, HTMLAttributes }) => [
@@ -830,12 +865,19 @@ export const Embed = Node.create({
         src: node.attrs.src,
         allowfullscreen: "true",
         loading: "lazy",
+        ...(node.attrs.title ? { title: node.attrs.title } : {}),
         ...(node.attrs.aspectRatio
           ? { style: `aspect-ratio: ${node.attrs.aspectRatio}` }
           : {}),
       },
     ],
+    ...(node.attrs.title
+      ? [["div", { class: "rte-media-caption" }, node.attrs.title]]
+      : []),
   ],
+  addNodeView() {
+    return ReactNodeViewRenderer(EmbedView)
+  },
 })
 
 /* ------------------------------ the slots ----------------------------------
@@ -901,17 +943,23 @@ export const EmbedSlot = Node.create({
         (pos: number) =>
         ({ editor }) => {
           const node = editor.state.doc.nodeAt(pos)
-          if (!node || node.type.name !== "embed") return false
+          if (!node || !EMBED_TYPES.has(node.type.name)) return false
           openEmbedSourcePopup(
             editor,
             pos,
             (at: number, embed: { src: string; aspectRatio: number }) => {
               const live = editor.state.doc.nodeAt(at)
-              if (!live || live.type.name !== "embed") return
+              if (!live || !EMBED_TYPES.has(live.type.name)) return
+              // a new link is the embed card's own node, whatever stood
+              // there; its place, width and caption carry over
+              const type = editor.state.schema.nodes.embed
               editor.view.dispatch(
-                editor.state.tr.setNodeMarkup(at, undefined, {
-                  ...live.attrs,
-                  ...embed,
+                editor.state.tr.setNodeMarkup(at, type, {
+                  src: embed.src,
+                  aspectRatio: embed.aspectRatio,
+                  title: live.attrs.title ?? null,
+                  align: live.attrs.align ?? null,
+                  frameWidth: live.attrs.frameWidth ?? null,
                 })
               )
             }
@@ -922,7 +970,7 @@ export const EmbedSlot = Node.create({
         (pos: number) =>
         ({ editor }) => {
           const node = editor.state.doc.nodeAt(pos)
-          if (!node || node.type.name !== "embed") return false
+          if (!node || !EMBED_TYPES.has(node.type.name)) return false
           openRemoveEmbedModal(editor, pos)
           return true
         },

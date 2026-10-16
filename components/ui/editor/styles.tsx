@@ -586,6 +586,12 @@ ${cellTintRules}
   width: 100% !important;
 }
 
+/* a picture or an embed being resized: the drag's cursor everywhere */
+body.rte-media-resizing,
+body.rte-media-resizing * {
+  cursor: ew-resize !important;
+}
+
 /* a caption under a frame: 14px gray-500, centred 8px below */
 .rte-doc .rte-media-caption {
   margin-top: 8px;

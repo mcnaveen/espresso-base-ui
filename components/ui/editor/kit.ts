@@ -33,7 +33,7 @@ import { Placeholder } from "@tiptap/extensions"
 import { ReactNodeViewRenderer } from "@tiptap/react"
 
 import { LinkEditor } from "./link-card"
-import { ImageView } from "./media"
+import { EmbedView, ImageView } from "./media"
 import {
   Attachment,
   LinkPaste,
@@ -46,6 +46,7 @@ import {
   Column,
   Columns,
   Embed,
+  embedFrameAttributes,
   EmbedSlot,
   ImageSlot,
   Limit,
@@ -276,9 +277,13 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
       extensions.push(
         // the frame carries its caption, drawn centred beneath it
         Youtube.extend({
+          addNodeView() {
+            return ReactNodeViewRenderer(EmbedView)
+          },
           addAttributes() {
             return {
               ...this.parent?.(),
+              ...embedFrameAttributes,
               title: {
                 default: null,
                 parseHTML: (el: HTMLElement) =>
