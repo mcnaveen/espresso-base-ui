@@ -83,6 +83,34 @@ const CSS = `
 .rte-doc .rte-player {
   margin: 8px 0;
 }
+/* the player sizes itself to the room it is given (a narrow table cell, a
+   column of a row): it never pushes its controls out past its edge, where
+   the More button would stand over the next cell and its column's handle.
+   Short of room, the track goes first, then the time, then the mute; the
+   play and More buttons always stay. It asks for 160px at the least, so a
+   column sized to its content keeps room for them */
+.rte-doc .node-audio {
+  container: rte-audio / inline-size;
+  min-width: 160px;
+}
+@container rte-audio (max-width: 300px) {
+  .rte-player .rte-player-slider {
+    display: none;
+  }
+  .rte-player [data-player-end] {
+    margin-left: auto;
+  }
+}
+@container rte-audio (max-width: 210px) {
+  .rte-player .rte-player-time {
+    display: none;
+  }
+}
+@container rte-audio (max-width: 150px) {
+  .rte-player [data-player-mute] {
+    display: none;
+  }
+}
 .ProseMirror-selectednode > .rte-player {
   outline: 2px solid var(--border);
   outline-offset: 2px;
@@ -447,11 +475,13 @@ const CSS = `
   position: relative;
   height: 40px;
   min-width: 48px;
-  padding: 6px 8px;
+  /* a 21px line stands where the centred one did in the 40px row, and a
+     cell of many lines starts level with its neighbours, as Notion's do */
+  padding: 9.5px 8px;
   border: 0;
   border-right: 1px solid var(--border-soft);
   border-bottom: 1px solid var(--border-soft);
-  vertical-align: middle;
+  vertical-align: top;
   text-align: left;
   background: transparent;
 }
@@ -478,6 +508,58 @@ const CSS = `
   line-height: 21px;
   margin: 0;
   color: var(--accent-foreground);
+}
+/* a cell's first block starts at its top and its last ends at its bottom:
+   a heading's, a list's, a quote's, a code block's or a picture's own
+   margin (the picture's and the player's on the figure inside its block)
+   is the page's, not the cell's */
+.rte-doc .ProseMirror :is(td, th) > :first-child,
+.rte-doc .ProseMirror :is(td, th) > :first-child > :is(.rte-figure, .rte-media, .rte-player) {
+  margin-top: 0;
+}
+/* (the column's resize handle, set into a cell while its border is
+   hovered, is never the cell's last block: counting it would hand the
+   block before it its margin back, and the row would grow under the
+   pointer) */
+.rte-doc .ProseMirror :is(td, th) > :last-child:not(.column-resize-handle),
+.rte-doc .ProseMirror :is(td, th) > :has(+ .column-resize-handle:last-child),
+.rte-doc .ProseMirror :is(td, th) > :last-child > :is(.rte-figure, .rte-media, .rte-player),
+.rte-doc
+  .ProseMirror
+  :is(td, th)
+  > :has(+ .column-resize-handle:last-child)
+  > :is(.rte-figure, .rte-media, .rte-player) {
+  margin-bottom: 0;
+}
+/* a picture in a cell is a thumbnail: a table's columns grow to their
+   content, so the picture's own width (its file's, 1000px and more) would
+   widen its column past the page. Capped here, smaller sizes still hold */
+.rte-doc .ProseMirror :is(td, th) .rte-media > [style*='width'],
+.rte-doc .ProseMirror :is(td, th) .rte-media img {
+  max-width: 280px !important;
+}
+.rte-doc .ProseMirror :is(td, th) .rte-media img {
+  height: auto;
+}
+/* set as the cell's words are: from its left, a line's gap from them */
+.rte-doc .ProseMirror :is(td, th) .rte-media {
+  margin-top: 8px;
+  margin-bottom: 8px;
+  justify-content: flex-start;
+}
+.rte-doc .ProseMirror :is(td, th) .rte-media > [style*='width'] {
+  margin-left: 0;
+  margin-right: auto;
+}
+/* a to-do in a cell: the box on the cell's 21px line, level with its
+   words (the cell takes the words' own margin away, so the box's goes
+   too), and starting where a cell's text starts */
+.rte-doc .ProseMirror :is(td, th) ul[data-type='taskList'] > li {
+  padding-left: 0;
+}
+.rte-doc .ProseMirror :is(td, th) ul[data-type='taskList'] > li > label {
+  margin-top: 0;
+  height: 21px;
 }
 /* the row's border option: one rule, or none */
 .rte-doc table tr[data-border] > * {

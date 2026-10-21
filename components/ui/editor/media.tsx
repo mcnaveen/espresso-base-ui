@@ -956,13 +956,14 @@ export function AudioView(props: NodeViewProps) {
         }}
       />
       <span
-        className="shrink-0 text-base tabular-nums text-accent-foreground"
+        className="rte-player-time shrink-0 text-base tabular-nums text-accent-foreground"
         aria-live="off"
       >
         {playerClock(position)} / {playerClock(duration)}
       </span>
-      <div className="flex shrink-0 items-center gap-1">
+      <div data-player-end="" className="flex shrink-0 items-center gap-1">
         <button
+          data-player-mute=""
           type="button"
           aria-label={muted ? "Unmute" : "Mute"}
           aria-pressed={muted}

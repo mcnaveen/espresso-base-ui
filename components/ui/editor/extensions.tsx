@@ -1234,7 +1234,7 @@ export const TabTrap = Extension.create({
  * joins the last line inside it — never the block chosen whole, never a
  * new column made of it — and Delete before one is left alone. A picture,
  * a video, a file or a rule next to the line is chosen first, taken away
- * on the next press. An empty column's line takes its column away.
+ * on the next press. Blocks chosen with the box take the keys themselves.
  */
 const ATOMS = new Set([
   "image",
@@ -1300,41 +1300,6 @@ function joinInto(editor: TiptapEditor, into: { node: PMNode; pos: number }) {
   return true
 }
 
-/** an empty column's only line: its column goes, the caret to the end of
- * the column before (or the start of the one after) */
-function dropEmptyColumn(editor: TiptapEditor) {
-  const { state } = editor
-  const { $from } = state.selection
-  const cellDepth = $from.depth - 1
-  const cell = $from.node(cellDepth)
-  if (cell.type.name !== "column" || cell.childCount !== 1) return false
-  const row = $from.node(cellDepth - 1)
-  if (row.attrs.media || row.childCount < 2) return false
-  const rowPos = $from.before(cellDepth - 1)
-  const cellPos = $from.before(cellDepth)
-  const index = $from.index(cellDepth - 1)
-  const tr = state.tr.delete(cellPos, cellPos + cell.nodeSize)
-  const after = tr.doc.nodeAt(rowPos)!
-  tr.setNodeMarkup(rowPos, undefined, {
-    ...after.attrs,
-    count: after.childCount,
-    widths: null,
-  })
-  let at: number
-  if (index > 0) {
-    let prevPos = rowPos + 1
-    for (let i = 0; i < index - 1; i++) prevPos += after.child(i).nodeSize
-    const line = lastLine(after.child(index - 1), prevPos)
-    at = line ? line.pos + 1 + line.node.content.size : prevPos + 1
-  } else {
-    const line = firstLine(after.child(0), rowPos + 1)
-    at = line ? line.pos + 1 : rowPos + 2
-  }
-  tr.setSelection(TextSelection.near(tr.doc.resolve(at)))
-  editor.view.dispatch(tr.scrollIntoView())
-  return true
-}
-
 export const EdgeKeys = Extension.create({
   name: "rteEdgeKeys",
   // after the lists' own empty-item Backspace, ahead of the editor's
@@ -1342,6 +1307,7 @@ export const EdgeKeys = Extension.create({
   addKeyboardShortcuts() {
     const back = (editor: TiptapEditor) => {
       const { state } = editor
+      if (chosenBlocks(state)) return false
       const sel = state.selection
       if (!sel.empty || !(sel instanceof TextSelection)) return false
       const { $from } = sel
@@ -1354,8 +1320,6 @@ export const EdgeKeys = Extension.create({
       if (block.type.spec.code && block.content.size) return true
       const container = $from.node($from.depth - 1)
       const index = $from.index($from.depth - 1)
-      if (container.type.name === "column" && block.content.size === 0)
-        if (dropEmptyColumn(editor)) return true
       if (container.type.name === "detailsContent" && index === 0) {
         // a toggle's lone empty line: the caret to the end of its title
         if (container.childCount === 1 && block.content.size === 0) {
@@ -1387,6 +1351,7 @@ export const EdgeKeys = Extension.create({
     }
     const forward = (editor: TiptapEditor) => {
       const { state } = editor
+      if (chosenBlocks(state)) return false
       const sel = state.selection
       if (!sel.empty || !(sel instanceof TextSelection)) return false
       const { $from } = sel
@@ -2010,15 +1975,40 @@ export const SuggestionList = React.forwardRef<
   )
 })
 
-/** the popup both lists ride: a fixed layer under the caret */
+/** the popup both lists ride: a fixed layer under the caret — or over it,
+ * where the window has no room below (a line at the page's foot), and kept
+ * inside the window's sides. With room on neither side it takes the
+ * larger, and its list scrolls in the room there is */
+const POPUP_GAP = 6
+const POPUP_EDGE = 8
 export function suggestionPopup() {
   let component: ReactRenderer<SuggestionListHandle> | null = null
   let host: HTMLDivElement | null = null
+  let watch: ResizeObserver | null = null
+  let last: SuggestionProps<SuggestItem> | null = null
   const place = (props: SuggestionProps<SuggestItem>) => {
+    last = props
     const rect = props.clientRect?.()
     if (!rect || !host) return
-    host.style.left = `${rect.left}px`
-    host.style.top = `${rect.bottom + 6}px`
+    // the scrolling list inside the renderer's own wrapper
+    const list = host.querySelector<HTMLElement>(".overflow-y-auto")
+    // the list's own height, before any room is taken from it
+    if (list) list.style.maxHeight = ""
+    const height = host.offsetHeight
+    const width = host.offsetWidth
+    const below = window.innerHeight - rect.bottom - POPUP_GAP - POPUP_EDGE
+    const above = rect.top - POPUP_GAP - POPUP_EDGE
+    const up = height > below && above > below
+    const room = up ? above : below
+    if (list && height > room) {
+      list.style.maxHeight = `${Math.max(room, 120)}px`
+    }
+    const fits = Math.min(height, Math.max(room, 120))
+    host.style.top = `${up ? rect.top - POPUP_GAP - fits : rect.bottom + POPUP_GAP}px`
+    host.style.left = `${Math.max(
+      POPUP_EDGE,
+      Math.min(rect.left, window.innerWidth - width - POPUP_EDGE)
+    )}px`
   }
   return {
     onStart: (props: SuggestionProps<SuggestItem>) => {
@@ -2031,13 +2021,27 @@ export function suggestionPopup() {
       host.appendChild(component.element)
       document.body.appendChild(host)
       place(props)
+      // the list grows and shrinks as the query narrows it: placed again
+      // each time, so it keeps to the side with room
+      watch = new ResizeObserver(() => {
+        if (last) place(last)
+      })
+      watch.observe(component.element)
+      requestAnimationFrame(() => {
+        const list = host?.querySelector(".overflow-y-auto")
+        if (list) watch?.observe(list)
+        if (last) place(last)
+      })
     },
     onUpdate: (props: SuggestionProps<SuggestItem>) => {
       component?.updateProps(props)
       place(props)
+      // and once more when the list has drawn its new items
+      requestAnimationFrame(() => place(props))
     },
     onKeyDown: (props: { event: KeyboardEvent }) => {
       if (props.event.key === "Escape") {
+        watch?.disconnect()
         host?.remove()
         component?.destroy()
         component = null
@@ -2047,6 +2051,7 @@ export function suggestionPopup() {
       return component?.ref?.onKeyDown(props) ?? false
     },
     onExit: () => {
+      watch?.disconnect()
       host?.remove()
       component?.destroy()
       component = null
