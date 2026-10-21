@@ -1226,6 +1226,278 @@ export const TabTrap = Extension.create({
   },
 })
 
+/* --------------------------------- backspace --------------------------------
+ * Backspace and Delete at a block's edge, as Notion has them. A heading's
+ * start makes it text first; a code block's start is left alone, its code
+ * never glued onto the line before. A toggle's first inner line steps out
+ * of the toggle. Next to a toggle, a table or a row of columns, a line
+ * joins the last line inside it — never the block chosen whole, never a
+ * new column made of it — and Delete before one is left alone. A picture,
+ * a video, a file or a rule next to the line is chosen first, taken away
+ * on the next press. Blocks chosen with the box take the keys themselves.
+ */
+const ATOMS = new Set([
+  "image",
+  "video",
+  "audio",
+  "embed",
+  "youtube",
+  "attachment",
+  "horizontalRule",
+  "imageSlot",
+  "embedSlot",
+])
+const HOLDERS = new Set(["details", "table", "columns"])
+
+/** the last line of text inside a block, at the end of its last child,
+ * or none (a picture last) */
+function lastLine(node: PMNode, pos: number): { node: PMNode; pos: number } | null {
+  let n = node
+  let p = pos
+  // a closed toggle's last line is its title
+  if (n.type.name === "details" && n.attrs.open === false && n.firstChild)
+    return { node: n.firstChild, pos: p + 1 }
+  while (!n.isTextblock) {
+    if (n.isAtom || !n.lastChild) return null
+    const last: PMNode = n.lastChild
+    p = p + 1 + n.content.size - last.nodeSize
+    n = last
+    if (n.type.name === "details" && n.attrs.open === false && n.firstChild)
+      return { node: n.firstChild, pos: p + 1 }
+  }
+  return { node: n, pos: p }
+}
+
+/** the first line of text inside a block, or none */
+function firstLine(node: PMNode, pos: number): { node: PMNode; pos: number } | null {
+  let n = node
+  let p = pos
+  while (!n.isTextblock) {
+    if (n.isAtom || !n.firstChild) return null
+    p = p + 1
+    n = n.firstChild
+  }
+  return { node: n, pos: p }
+}
+
+/** the caret's line taken into the end of `into`: emptied, it goes; with
+ * words, they go on after the words there */
+function joinInto(editor: TiptapEditor, into: { node: PMNode; pos: number }) {
+  const { state } = editor
+  const { $from } = state.selection
+  const block = $from.parent
+  const blockPos = $from.before()
+  const end = into.pos + 1 + into.node.content.size
+  if (
+    block.content.size &&
+    !into.node.canReplace(into.node.childCount, into.node.childCount, block.content)
+  )
+    return false
+  const tr = state.tr.delete(blockPos, blockPos + block.nodeSize)
+  if (block.content.size) tr.insert(end, block.content)
+  tr.setSelection(TextSelection.create(tr.doc, end))
+  editor.view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+export const EdgeKeys = Extension.create({
+  name: "rteEdgeKeys",
+  // after the lists' own empty-item Backspace, ahead of the editor's
+  priority: 999,
+  addKeyboardShortcuts() {
+    const back = (editor: TiptapEditor) => {
+      const { state } = editor
+      if (chosenBlocks(state)) return false
+      const sel = state.selection
+      if (!sel.empty || !(sel instanceof TextSelection)) return false
+      const { $from } = sel
+      if ($from.parentOffset !== 0 || $from.depth < 1) return false
+      const block = $from.parent
+      // a heading's start: text first
+      if (block.type.name === "heading")
+        return editor.commands.setNode("paragraph")
+      // a code block's start: left as it is, the code kept apart
+      if (block.type.spec.code && block.content.size) return true
+      const container = $from.node($from.depth - 1)
+      const index = $from.index($from.depth - 1)
+      if (container.type.name === "detailsContent" && index === 0) {
+        // a toggle's lone empty line: the caret to the end of its title
+        if (container.childCount === 1 && block.content.size === 0) {
+          const summaryEnd = $from.before($from.depth - 1) - 1
+          editor.view.dispatch(
+            state.tr.setSelection(TextSelection.create(state.doc, summaryEnd))
+          )
+          return true
+        }
+        return liftOut(editor)
+      }
+      if (index === 0) return false
+      const prev = container.child(index - 1)
+      const prevPos = $from.before() - prev.nodeSize
+      if (ATOMS.has(prev.type.name)) {
+        // emptied, the line goes and the picture is chosen; with words,
+        // the picture is chosen and the words stay
+        if (block.content.size === 0) return false
+        editor.view.dispatch(
+          state.tr.setSelection(NodeSelection.create(state.doc, prevPos))
+        )
+        return true
+      }
+      if (HOLDERS.has(prev.type.name)) {
+        const line = lastLine(prev, prevPos)
+        return line ? joinInto(editor, line) : false
+      }
+      return false
+    }
+    const forward = (editor: TiptapEditor) => {
+      const { state } = editor
+      if (chosenBlocks(state)) return false
+      const sel = state.selection
+      if (!sel.empty || !(sel instanceof TextSelection)) return false
+      const { $from } = sel
+      const block = $from.parent
+      if ($from.parentOffset !== block.content.size || $from.depth < 1)
+        return false
+      const container = $from.node($from.depth - 1)
+      const index = $from.index($from.depth - 1)
+      if (index + 1 >= container.childCount) return false
+      const next = container.child(index + 1)
+      const nextPos = $from.after()
+      if (ATOMS.has(next.type.name)) {
+        if (block.content.size === 0) return false
+        editor.view.dispatch(
+          state.tr.setSelection(NodeSelection.create(state.doc, nextPos))
+        )
+        return true
+      }
+      // a toggle, a table or a row of columns after the line: an empty
+      // line goes, words stay where they are
+      if (HOLDERS.has(next.type.name)) return block.content.size > 0
+      // a list after the line: its first item's words come up into it
+      if (LISTS.has(next.type.name) && block.content.size) {
+        const item = next.firstChild!
+        if (item.childCount !== 1 || !item.firstChild!.isTextblock) return true
+        const words = item.firstChild!.content
+        const tr = state.tr
+        if (next.childCount === 1) tr.delete(nextPos, nextPos + next.nodeSize)
+        else tr.delete(nextPos + 1, nextPos + 1 + item.nodeSize)
+        const end = $from.pos
+        tr.insert(end, words)
+        tr.setSelection(TextSelection.create(tr.doc, end))
+        editor.view.dispatch(tr.scrollIntoView())
+        return true
+      }
+      return false
+    }
+    return {
+      Backspace: ({ editor }) => back(editor),
+      Delete: ({ editor }) => forward(editor),
+    }
+  },
+})
+
+/**
+ * Keys on a picture, a player or a slot. A press on a video, an audio
+ * player's controls, a slot's face or an embed leaves the focus with it,
+ * where the editor's keys never reach; Backspace or Delete there still
+ * takes the block away (a caption being typed keeps its own keys). A press
+ * into an embedded page hands the keys back to the page, the embed chosen.
+ * A letter typed on a chosen picture or player does not replace it.
+ */
+const TEXT_FIELD =
+  'textarea, [contenteditable="true"], input:not([type]), input[type="text"], input[type="url"], input[type="search"], input[type="email"], input[type="number"], input[type="tel"], input[type="password"]'
+
+/** the media block an element draws part of, with its position */
+function mediaAt(view: PMEditorView, el: Element) {
+  for (let at: Element | null = el; at && at !== view.dom; at = at.parentElement) {
+    let pos: number
+    try {
+      pos = view.posAtDOM(at, 0)
+    } catch {
+      continue
+    }
+    const $pos = view.state.doc.resolve(pos)
+    const candidates = [pos, pos - 1]
+    for (let d = $pos.depth; d > 0; d--) candidates.push($pos.before(d))
+    for (const c of candidates) {
+      if (c < 0) continue
+      const node = view.state.doc.nodeAt(c)
+      if (node && ATOMS.has(node.type.name) && view.nodeDOM(c)?.contains(el))
+        return { pos: c, node }
+    }
+  }
+  return null
+}
+
+export const MediaKeys = Extension.create({
+  name: "rteMediaKeys",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("rteMediaKeys"),
+        props: {
+          handleTextInput(view) {
+            const sel = view.state.selection
+            return sel instanceof NodeSelection && ATOMS.has(sel.node.type.name)
+          },
+        },
+        view(view) {
+          const onKey = (event: KeyboardEvent) => {
+            if (event.key !== "Backspace" && event.key !== "Delete") return
+            if (event.metaKey || event.ctrlKey || event.altKey) return
+            const target = event.target
+            if (!(target instanceof Element) || target === view.dom) return
+            if (!view.editable) return
+            // a field of its own (a caption) keeps its keys; the page's own
+            // editable root is no such field
+            const field = target.closest(TEXT_FIELD)
+            if (field && field !== view.dom) return
+            const media = mediaAt(view, target)
+            if (!media) return
+            event.preventDefault()
+            event.stopPropagation()
+            const tr = view.state.tr.delete(media.pos, media.pos + media.node.nodeSize)
+            tr.setSelection(
+              TextSelection.near(
+                tr.doc.resolve(Math.min(media.pos, tr.doc.content.size)),
+                event.key === "Backspace" ? -1 : 1
+              )
+            )
+            view.dispatch(tr.scrollIntoView())
+            view.focus()
+          }
+          // the page lost the focus to an embedded page: the embed is
+          // chosen and the keys come back, the press still the embed's
+          const onBlur = () => {
+            setTimeout(() => {
+              const frame = document.activeElement
+              if (!(frame instanceof HTMLIFrameElement) || !view.dom.contains(frame))
+                return
+              if (!view.editable) return
+              const media = mediaAt(view, frame)
+              if (!media) return
+              view.dispatch(
+                view.state.tr.setSelection(
+                  NodeSelection.create(view.state.doc, media.pos)
+                )
+              )
+              view.focus()
+            }, 0)
+          }
+          view.dom.addEventListener("keydown", onKey, true)
+          window.addEventListener("blur", onBlur)
+          return {
+            destroy() {
+              view.dom.removeEventListener("keydown", onKey, true)
+              window.removeEventListener("blur", onBlur)
+            },
+          }
+        },
+      }),
+    ]
+  },
+})
+
 export const ListBackspace = Extension.create({
   name: "rteListBackspace",
   priority: 1000,
@@ -1703,15 +1975,40 @@ export const SuggestionList = React.forwardRef<
   )
 })
 
-/** the popup both lists ride: a fixed layer under the caret */
+/** the popup both lists ride: a fixed layer under the caret — or over it,
+ * where the window has no room below (a line at the page's foot), and kept
+ * inside the window's sides. With room on neither side it takes the
+ * larger, and its list scrolls in the room there is */
+const POPUP_GAP = 6
+const POPUP_EDGE = 8
 export function suggestionPopup() {
   let component: ReactRenderer<SuggestionListHandle> | null = null
   let host: HTMLDivElement | null = null
+  let watch: ResizeObserver | null = null
+  let last: SuggestionProps<SuggestItem> | null = null
   const place = (props: SuggestionProps<SuggestItem>) => {
+    last = props
     const rect = props.clientRect?.()
     if (!rect || !host) return
-    host.style.left = `${rect.left}px`
-    host.style.top = `${rect.bottom + 6}px`
+    // the scrolling list inside the renderer's own wrapper
+    const list = host.querySelector<HTMLElement>(".overflow-y-auto")
+    // the list's own height, before any room is taken from it
+    if (list) list.style.maxHeight = ""
+    const height = host.offsetHeight
+    const width = host.offsetWidth
+    const below = window.innerHeight - rect.bottom - POPUP_GAP - POPUP_EDGE
+    const above = rect.top - POPUP_GAP - POPUP_EDGE
+    const up = height > below && above > below
+    const room = up ? above : below
+    if (list && height > room) {
+      list.style.maxHeight = `${Math.max(room, 120)}px`
+    }
+    const fits = Math.min(height, Math.max(room, 120))
+    host.style.top = `${up ? rect.top - POPUP_GAP - fits : rect.bottom + POPUP_GAP}px`
+    host.style.left = `${Math.max(
+      POPUP_EDGE,
+      Math.min(rect.left, window.innerWidth - width - POPUP_EDGE)
+    )}px`
   }
   return {
     onStart: (props: SuggestionProps<SuggestItem>) => {
@@ -1724,13 +2021,27 @@ export function suggestionPopup() {
       host.appendChild(component.element)
       document.body.appendChild(host)
       place(props)
+      // the list grows and shrinks as the query narrows it: placed again
+      // each time, so it keeps to the side with room
+      watch = new ResizeObserver(() => {
+        if (last) place(last)
+      })
+      watch.observe(component.element)
+      requestAnimationFrame(() => {
+        const list = host?.querySelector(".overflow-y-auto")
+        if (list) watch?.observe(list)
+        if (last) place(last)
+      })
     },
     onUpdate: (props: SuggestionProps<SuggestItem>) => {
       component?.updateProps(props)
       place(props)
+      // and once more when the list has drawn its new items
+      requestAnimationFrame(() => place(props))
     },
     onKeyDown: (props: { event: KeyboardEvent }) => {
       if (props.event.key === "Escape") {
+        watch?.disconnect()
         host?.remove()
         component?.destroy()
         component = null
@@ -1740,6 +2051,7 @@ export function suggestionPopup() {
       return component?.ref?.onKeyDown(props) ?? false
     },
     onExit: () => {
+      watch?.disconnect()
       host?.remove()
       component?.destroy()
       component = null

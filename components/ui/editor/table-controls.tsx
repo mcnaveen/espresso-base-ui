@@ -57,7 +57,7 @@ import {
   HeaderRowIcon,
   SmallCloseIcon,
 } from "@/components/ui/rich-text-editor-icons"
-import { hue, PALETTE, TABLE_SETTLE } from "./extensions"
+import { hue, PALETTE, SMOOTH_SKIP, TABLE_SETTLE } from "./extensions"
 
 type Box = { left: number; top: number; width: number; height: number }
 const box = (r: DOMRect): Box => ({
@@ -491,6 +491,9 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
         return
       tr.setNodeMarkup(pos, null, { ...cell.attrs, colwidth })
     })
+    // the widths written as they already stand: nothing moves, nothing
+    // slides
+    tr.setMeta(SMOOTH_SKIP, true)
     if (tr.docChanged) c.ed.view.dispatch(tr)
   }
   const hasUnsizedColumn = (c: Ctx): boolean => {
@@ -733,7 +736,6 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
       if (!ed || ed.isDestroyed || !ed.isEditable || menuOpenRef.current)
         return
       if (s.press?.active) return
-      holdBeforeResize(ed)
       const target = e.target instanceof Element ? e.target : null
       if (!target) return
       if (layerRef.current?.contains(target)) return
@@ -774,6 +776,9 @@ export function TableControls({ editor }: { editor: TiptapEditor }) {
       s.hoverPos = null
       syncSelection()
     }
+    // the widths hold when a column's resize begins (the plugin's drag,
+    // below), not when its border is only hovered: holding them is an edit
+    // of the table, which a pointer passing over a border must not make
     document.addEventListener("mousemove", onMove, true)
     return () => document.removeEventListener("mousemove", onMove, true)
   }, [editor, syncSelection, holdBeforeResize])

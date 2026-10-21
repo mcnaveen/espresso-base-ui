@@ -956,13 +956,14 @@ export function AudioView(props: NodeViewProps) {
         }}
       />
       <span
-        className="shrink-0 text-base tabular-nums text-accent-foreground"
+        className="rte-player-time shrink-0 text-base tabular-nums text-accent-foreground"
         aria-live="off"
       >
         {playerClock(position)} / {playerClock(duration)}
       </span>
-      <div className="flex shrink-0 items-center gap-1">
+      <div data-player-end="" className="flex shrink-0 items-center gap-1">
         <button
+          data-player-mute=""
           type="button"
           aria-label={muted ? "Unmute" : "Mute"}
           aria-pressed={muted}
@@ -1028,7 +1029,7 @@ export function AudioView(props: NodeViewProps) {
  */
 
 export function AttachmentView(props: NodeViewProps) {
-  const { node, editor, deleteNode } = props
+  const { node, editor, deleteNode, getPos } = props
   const editable = editor.isEditable
   const fileName = (node.attrs.fileName as string) || "Attachment"
   const href = (node.attrs.href as string) || undefined
@@ -1046,6 +1047,22 @@ export function AttachmentView(props: NodeViewProps) {
         contentEditable={false}
         draggable={false}
         onDragStart={(e) => e.preventDefault()}
+        // a press on the row chooses the file block, the keys kept on the
+        // page, so Backspace or Delete next takes it away; the click
+        // still opens the file
+        onMouseDown={(e) => {
+          if (!editable || e.button !== 0) return
+          if ((e.target as HTMLElement).closest(".rte-attachment-close")) return
+          const pos = getPos()
+          if (typeof pos !== "number") return
+          e.preventDefault()
+          editor.view.dispatch(
+            editor.view.state.tr.setSelection(
+              NodeSelection.create(editor.view.state.doc, pos)
+            )
+          )
+          editor.view.focus()
+        }}
         className="flex h-7 w-full items-center gap-2 rounded-lg px-2 text-base text-secondary-foreground no-underline transition-colors hover:bg-secondary"
         onClick={(e) => {
           const target = e.target as HTMLElement
