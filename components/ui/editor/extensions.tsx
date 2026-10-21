@@ -14,8 +14,14 @@ import {
   type ChainedCommands,
   type Editor as TiptapEditor,
 } from "@tiptap/core"
-import type { Node as PMNode } from "@tiptap/pm/model"
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
+import { Fragment, type Node as PMNode } from "@tiptap/pm/model"
+import {
+  NodeSelection,
+  Plugin,
+  PluginKey,
+  TextSelection,
+  type Transaction,
+} from "@tiptap/pm/state"
 import { CellSelection } from "@tiptap/pm/tables"
 import {
   Decoration,
@@ -37,6 +43,7 @@ import {
   openImageSourcePopup,
   openRemoveEmbedModal,
 } from "./media"
+import { chosenBlocks } from "./block-select"
 
 import { cn } from "@/lib/utils"
 import {
@@ -50,6 +57,7 @@ import {
   Grid2Icon,
   Grid3Icon,
   Grid4Icon,
+  Grid5Icon,
   Heading1Icon,
   Heading2Icon,
   Heading3Icon,
@@ -859,6 +867,390 @@ export const Video = Node.create({
 /** the leaf blocks Safari will not hold a drawn selection around */
 const PLAYERS = new Set(["video", "youtube", "embed"])
 
+/**
+ * Blocks move smoothly as the document changes: a new line, a block added
+ * or taken away, a paragraph wrapping onto another line. The page's own
+ * View Transitions cannot serve an editor (they hold the change back until
+ * a screenshot is taken, and the editor's state must change at once), so
+ * the blocks are animated from where they stood to where they now are
+ * (FLIP): each top-level block and list item is measured after every
+ * change, the next change compares, and whatever moved slides the
+ * difference back to nothing; a block that is new fades in. The blocks
+ * stay live — the caret, typing and clicks are never held.
+ */
+const SMOOTH_MS = 200
+const SMOOTH_EASE = "cubic-bezier(0.2, 0, 0, 1)"
+/** more new blocks than this at once is a load or a paste, not an edit */
+const SMOOTH_MAX_NEW = 3
+
+/** sent on the editor's root when blocks have come to rest after a slide */
+export const BLOCKS_SETTLED = "rte-blocks-settled"
+/**
+ * a change that moves its own blocks, frame by frame (a column bar's drag):
+ * the blocks are measured again but neither slid nor faded, since the row
+ * drawn anew each frame would otherwise fade in each frame
+ */
+export const SMOOTH_SKIP = "rteSmoothSkip"
+
+export const SmoothBlocks = Extension.create<object, { stop?: () => void }>({
+  name: "rteSmoothBlocks",
+  addStorage() {
+    return {}
+  },
+  onCreate() {
+    const editor = this.editor
+    const view = editor.view
+    const dom = view.dom as HTMLElement
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)")
+    let last = new Map<HTMLElement, number>()
+    const running = new Set<Animation>()
+
+    const tracked = () => {
+      const out: HTMLElement[] = []
+      for (const child of dom.children)
+        if (child instanceof HTMLElement) out.push(child)
+      dom.querySelectorAll<HTMLElement>("li").forEach((li) => out.push(li))
+      return out
+    }
+    // a block's top against the block holding it (a list item against its
+    // item or block, a block against the page): scrolling and the holder's
+    // own move cancel out, so each moves by its own difference only
+    const measure = () => {
+      const tops = new Map<HTMLElement, number>()
+      const base = dom.getBoundingClientRect().top
+      const topBlock = (el: HTMLElement) => {
+        let at = el
+        while (at.parentElement && at.parentElement !== dom) at = at.parentElement
+        return at
+      }
+      for (const el of tracked()) {
+        const holder =
+          el.parentElement === dom
+            ? null
+            : (el.parentElement?.closest<HTMLElement>("li") ?? topBlock(el))
+        const top = el.getBoundingClientRect().top
+        tops.set(
+          el,
+          top - (holder ? holder.getBoundingClientRect().top : base)
+        )
+      }
+      return tops
+    }
+    // the transform a block is drawn with right now, mid-slide
+    const drawnAt = (el: HTMLElement) => {
+      const t = getComputedStyle(el).transform
+      if (!t || t === "none") return 0
+      return new DOMMatrixReadOnly(t).m42
+    }
+    const settled = () => {
+      if (running.size) return
+      last = measure()
+      // the grips placed against the moving blocks find their places again
+      dom.dispatchEvent(new Event(BLOCKS_SETTLED))
+    }
+
+    const onTransaction = ({ transaction }: { transaction: Transaction }) => {
+      if (!transaction.docChanged || view.composing) {
+        return
+      }
+      if (
+        reduced.matches ||
+        !last.size ||
+        transaction.getMeta(SMOOTH_SKIP)
+      ) {
+        last = measure()
+        return
+      }
+      // a slide still under way goes on from where it is drawn now
+      const from = new Map<HTMLElement, number>()
+      for (const [el, top] of last) from.set(el, top)
+      const drawn = new Map<HTMLElement, number>()
+      for (const a of running) {
+        const el = (a.effect as KeyframeEffect | null)?.target
+        if (el instanceof HTMLElement) drawn.set(el, drawnAt(el))
+      }
+      for (const a of [...running]) a.cancel()
+      running.clear()
+      const now = measure()
+      const fresh = [...now.keys()].filter((el) => !from.has(el))
+      const play = (a: Animation) => {
+        running.add(a)
+        const done = () => {
+          running.delete(a)
+          settled()
+        }
+        a.onfinish = done
+        a.oncancel = () => running.delete(a)
+      }
+      for (const [el, top] of now) {
+        const before = from.get(el)
+        if (before === undefined) continue
+        const dy = before + (drawn.get(el) ?? 0) - top
+        if (Math.abs(dy) < 0.5) continue
+        play(
+          el.animate(
+            [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
+            { duration: SMOOTH_MS, easing: SMOOTH_EASE }
+          )
+        )
+      }
+      if (fresh.length <= SMOOTH_MAX_NEW)
+        for (const el of fresh)
+          play(
+            el.animate([{ opacity: 0 }, { opacity: 1 }], {
+              duration: SMOOTH_MS,
+              easing: "ease-out",
+            })
+          )
+      last = now
+    }
+    // a change of layout no edit made (a picture loading, the window
+    // resized) is taken as the new resting place, not slid to
+    const resize = new ResizeObserver(() => settled())
+    resize.observe(dom)
+    const onResize = () => settled()
+    window.addEventListener("resize", onResize)
+    editor.on("transaction", onTransaction)
+    last = measure()
+    this.storage.stop = () => {
+      editor.off("transaction", onTransaction)
+      window.removeEventListener("resize", onResize)
+      resize.disconnect()
+      for (const a of running) a.cancel()
+    }
+  },
+  onDestroy() {
+    this.storage.stop?.()
+  },
+})
+
+/**
+ * Backspace in an empty list item takes the item away and puts the caret at
+ * the end of the one above, so the list stays one list. Left to the default,
+ * the item is lifted out as a loose line, splitting the list in two around
+ * it (the halves numbered afresh, the line set apart by the lists' margins).
+ * The first item, with nothing above it, keeps the default: it becomes a line.
+ */
+/* ------------------------------------ tab ----------------------------------
+ * Tab as Notion has it: it never leaves the page. On a list item it nests
+ * the item under the one above, Shift+Tab lifts it back — but never out
+ * of its list, which a top-level item stays in. A block just after a list
+ * or a toggle goes into it (the list's last item, the toggle's body, opened
+ * to show it), and Shift+Tab sets a list item's or a toggle's own blocks
+ * back out after it, those after them coming along so the order holds.
+ * In code Tab indents the caret's lines two spaces and Shift+Tab takes
+ * them back; a table's cells are stepped through by the table's own keys.
+ */
+const LISTS = new Set(["bulletList", "orderedList", "taskList"])
+const ITEMS = new Set(["listItem", "taskItem"])
+const INDENT = "  "
+
+type TabState = TiptapEditor["state"]
+
+/** the caret's lines in a code block, as offsets in its text */
+function codeLines(state: TabState) {
+  const { $from, $to } = state.selection
+  const text = $from.parent.textContent
+  const starts: number[] = []
+  let at = text.lastIndexOf("\n", $from.parentOffset - 1) + 1
+  starts.push(at)
+  const end = $to.sameParent($from) ? $to.parentOffset : $from.parentOffset
+  for (;;) {
+    const next = text.indexOf("\n", at)
+    if (next < 0 || next >= end) break
+    at = next + 1
+    starts.push(at)
+  }
+  return { text, starts, base: $from.start() }
+}
+
+function indentCode(editor: TiptapEditor, out: boolean) {
+  const { state } = editor
+  const { empty } = state.selection
+  const { text, starts, base } = codeLines(state)
+  const tr = state.tr
+  if (!out && empty) {
+    tr.insertText(INDENT)
+  } else {
+    // the last line first, so the earlier offsets still hold
+    for (const start of [...starts].reverse()) {
+      if (!out) tr.insertText(INDENT, base + start)
+      else {
+        const lead = /^( {1,2}|\t)/.exec(text.slice(start))
+        if (lead) tr.delete(base + start, base + start + lead[0].length)
+      }
+    }
+  }
+  if (!tr.docChanged) return true
+  editor.view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+/** the caret's block set into the list or toggle just before it */
+function nestInto(editor: TiptapEditor) {
+  const { state } = editor
+  const { $from } = state.selection
+  const depth = $from.depth
+  if (depth < 1) return false
+  const index = $from.index(depth - 1)
+  if (index === 0) return false
+  const container = $from.node(depth - 1)
+  const prev = container.child(index - 1)
+  const blockPos = $from.before(depth)
+  const block = $from.parent
+  const prevPos = blockPos - prev.nodeSize
+  let holder: PMNode
+  let at: number
+  if (LISTS.has(prev.type.name)) {
+    holder = prev.lastChild!
+    at = prevPos + prev.nodeSize - 2
+  } else if (prev.type.name === "details" && prev.lastChild) {
+    holder = prev.lastChild
+    at = prevPos + prev.nodeSize - 2
+  } else return false
+  if (!holder.canReplace(holder.childCount, holder.childCount, Fragment.from(block)))
+    return false
+  const tr = state.tr
+  tr.delete(blockPos, blockPos + block.nodeSize)
+  tr.insert(at, block)
+  if (prev.type.name === "details" && prev.attrs.open === false)
+    tr.setNodeMarkup(prevPos, undefined, { ...prev.attrs, open: true })
+  tr.setSelection(TextSelection.near(tr.doc.resolve(at + ($from.pos - blockPos))))
+  editor.view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+/** the caret's block, and the blocks after it in the same holder, set back
+ * out after the list item or toggle holding them */
+function liftOut(editor: TiptapEditor) {
+  const { state } = editor
+  const { $from } = state.selection
+  const depth = $from.depth
+  if (depth < 3) return false
+  const holder = $from.node(depth - 1)
+  const index = $from.index(depth - 1)
+  const name = holder.type.name
+  const inItem = ITEMS.has(name) && index > 0
+  const inToggle = name === "detailsContent"
+  if (!inItem && !inToggle) return false
+  const from = $from.before(depth)
+  const to = $from.end(depth - 1)
+  const content = state.doc.slice(from, to).content
+  const tr = state.tr
+  let at: number
+  if (inToggle) {
+    // past the toggle
+    at = $from.after(depth - 2)
+    tr.insert(at, content)
+  } else {
+    // past the item: the rest of its list goes on after the blocks
+    const itemEnd = $from.after(depth - 1)
+    const list = $from.node(depth - 2)
+    const last = $from.index(depth - 2) === list.childCount - 1
+    if (last) at = $from.after(depth - 2)
+    else {
+      tr.split(itemEnd, 1)
+      at = itemEnd + 1
+    }
+    tr.insert(at, content)
+  }
+  const placed = tr.steps.length
+  // a toggle's body holds a block at least: emptied, an empty line stays
+  if (inToggle && index === 0)
+    tr.replaceWith(from, to, state.schema.nodes.paragraph.create())
+  else tr.delete(from, to)
+  const start = tr.mapping.slice(placed).map(at, 1)
+  tr.setSelection(TextSelection.near(tr.doc.resolve(start + ($from.pos - from))))
+  editor.view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+/** where the caret stands: in code, a table, a list item's first line */
+function tabPlace(state: TabState) {
+  const { $from } = state.selection
+  let table = false
+  for (let d = $from.depth; d > 0; d--)
+    if ($from.node(d).type.spec.tableRole === "cell") table = true
+  const holder = $from.depth > 0 ? $from.node($from.depth - 1) : null
+  const itemHead =
+    !!holder && ITEMS.has(holder.type.name) && $from.index($from.depth - 1) === 0
+  // the item's list stands in another item: it can be lifted
+  const nested =
+    itemHead && $from.depth >= 4 && ITEMS.has($from.node($from.depth - 3).type.name)
+  return {
+    code: $from.parent.type.spec.code === true,
+    table,
+    itemHead,
+    nested,
+    summary: $from.parent.type.name === "detailsSummary",
+  }
+}
+
+export const TabKeys = Extension.create({
+  name: "rteTabKeys",
+  // ahead of the lists' own Tab and Shift+Tab, which this hands back to
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Tab: ({ editor }) => {
+        const { state } = editor
+        // chosen blocks hold still
+        if (chosenBlocks(state)) return true
+        const at = tabPlace(state)
+        if (at.code) return indentCode(editor, false)
+        if (at.table || at.itemHead) return false
+        if (at.summary) return true
+        return nestInto(editor)
+      },
+      "Shift-Tab": ({ editor }) => {
+        const { state } = editor
+        if (chosenBlocks(state)) return true
+        const at = tabPlace(state)
+        if (at.code) return indentCode(editor, true)
+        if (at.table) return false
+        // a top-level item stays in its list
+        if (at.itemHead) return !at.nested
+        if (at.summary) return true
+        return liftOut(editor)
+      },
+    }
+  },
+})
+
+/** whatever no other key took: Tab stays on the page, as in Notion */
+export const TabTrap = Extension.create({
+  name: "rteTabTrap",
+  priority: 1,
+  addKeyboardShortcuts() {
+    return { Tab: () => true, "Shift-Tab": () => true }
+  },
+})
+
+export const ListBackspace = Extension.create({
+  name: "rteListBackspace",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Backspace: ({ editor }) => {
+        const { selection } = editor.state
+        const { $from, empty } = selection
+        if (!empty || $from.parent.content.size > 0 || $from.depth < 3)
+          return false
+        const item = $from.node(-1)
+        if (!["listItem", "taskItem"].includes(item.type.name)) return false
+        if (item.childCount !== 1) return false
+        if ($from.index(-2) === 0) return false
+        const start = $from.before(-1)
+        const tr = editor.state.tr.delete(start, $from.after(-1))
+        const caret = TextSelection.findFrom(tr.doc.resolve(start - 1), -1, true)
+        if (!caret) return false
+        editor.view.dispatch(tr.setSelection(caret).scrollIntoView())
+        return true
+      },
+    }
+  },
+})
+
 export const AtomSelection = Extension.create({
   name: "rteAtomSelection",
   addProseMirrorPlugins() {
@@ -1379,12 +1771,10 @@ export const SLASH_ITEMS: SuggestItem[] = [
   { id: "columns2", label: "2 columns", group: "Layout", icon: <Grid2Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns2") },
   { id: "columns3", label: "3 columns", group: "Layout", icon: <Grid3Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns3") },
   { id: "columns4", label: "4 columns", group: "Layout", icon: <Grid4Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns4") },
+  { id: "columns5", label: "5 columns", group: "Layout", icon: <Grid5Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns5") },
   // ---- the media, as the toolbar's Insert menu lays them: a picture's
-  // slot, the rows of pictures, audio from the disk, the embed's slot
+  // slot, audio from the disk, the embed's slot
   { id: "image", label: "Image", group: "Media", icon: <ImageIcon className="size-4" />, run: (ed) => ed.chain().focus().insertImageSlot().run() },
-  { id: "image1", label: "1 image column", group: "Media", icon: <ImageIcon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(1).run() },
-  { id: "image2", label: "2 image columns", group: "Media", icon: <Grid2Icon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(2).run() },
-  { id: "image3", label: "3 image columns", group: "Media", icon: <Grid3Icon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(3).run() },
   { id: "video", label: "Video", group: "Media", icon: <VideoIcon className="size-4" />, run: () => pick("rte-video-input")() },
   { id: "audio", label: "Audio", group: "Media", icon: <AudioWavesIcon className="size-4" />, run: () => pick("rte-audio-input")() },
   { id: "file", label: "File", group: "Media", icon: <FileUploadIcon className="size-4" />, run: () => pick("rte-attach-input")() },
@@ -1421,7 +1811,7 @@ export const SlashCommands = Extension.create({
 })
 
 /* ---------------------------------- columns --------------------------------
- * Two to four blocks side by side, each a column of blocks — the branch's
+ * Two to five blocks side by side, each a column of blocks — the branch's
  * multi-column layout. `setColumns` re-counts the row the selection is in
  * (columns added empty, or the extra ones folded into the last kept), or
  * lays a fresh row.
@@ -1454,7 +1844,7 @@ export const Columns = Node.create({
   group: "block",
   // one column is a layout too: its blocks stacked, still carried and
   // rearranged as a layout's; a block set beside one makes columns again
-  content: "column{1,4}",
+  content: "column{1,5}",
   defining: true,
   addAttributes() {
     return {
@@ -1560,17 +1950,23 @@ export const Columns = Node.create({
 
           const column = state.schema.nodes.column
           const columns = row.content.content.slice(0, count)
+          const blank = (cell: PMNode) =>
+            cell.childCount === 1 &&
+            cell.firstChild!.isTextblock &&
+            cell.firstChild!.content.size === 0
           if (count > row.childCount) {
             // grown: the new columns stand empty on the right
             for (let i = row.childCount; i < count; i++)
               columns.push(column.createAndFill()!)
           } else {
             // shrunk: what the dropped columns held goes to the end of the
-            // last column kept, in order, so nothing is lost
+            // last column kept, in order, so nothing is lost; a column with
+            // nothing written in it brings no empty line along
             const last = columns[count - 1]
             let content = last.content
             for (let i = count; i < row.childCount; i++)
-              content = content.append(row.child(i).content)
+              if (!blank(row.child(i)))
+                content = content.append(row.child(i).content)
             columns[count - 1] = last.copy(content)
           }
 
@@ -1586,15 +1982,19 @@ export const Columns = Node.create({
           // carried along with the text folded into the last one
           const index = $from.index(depth)
           let pos = $from.pos
+          let bias = 1
           if (index >= count) {
             let start = from + 1
             for (let i = 0; i < count - 1; i++) start += row.child(i).nodeSize
             let before = row.child(count - 1).content.size
             for (let i = count; i < index; i++)
-              before += row.child(i).content.size
-            pos = start + 1 + before + ($from.pos - $from.start(depth + 1))
+              if (!blank(row.child(i))) before += row.child(i).content.size
+            // in a blank column, which is gone: the end of the last kept
+            pos = start + 1 + before
+            if (blank(row.child(index))) bias = -1
+            else pos += $from.pos - $from.start(depth + 1)
           }
-          tr.setSelection(TextSelection.near(tr.doc.resolve(pos)))
+          tr.setSelection(TextSelection.near(tr.doc.resolve(pos), bias))
           return true
         },
     }
@@ -1684,6 +2084,7 @@ export const BLOCKS = [
   { value: "columns2", label: "2 columns", Icon: Grid2Icon },
   { value: "columns3", label: "3 columns", Icon: Grid3Icon },
   { value: "columns4", label: "4 columns", Icon: Grid4Icon },
+  { value: "columns5", label: "5 columns", Icon: Grid5Icon },
 ] as const
 export type BlockValue = (typeof BLOCKS)[number]["value"]
 
@@ -1726,6 +2127,7 @@ export function applyBlock(chain: ChainedCommands, value: BlockValue) {
   else if (value === "columns2") chain.setColumns(2).run()
   else if (value === "columns3") chain.setColumns(3).run()
   else if (value === "columns4") chain.setColumns(4).run()
+  else if (value === "columns5") chain.setColumns(5).run()
 }
 
 /* ------------------------------ fonts and sizes ----------------------------- */

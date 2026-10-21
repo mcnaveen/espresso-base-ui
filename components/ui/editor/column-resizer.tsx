@@ -13,12 +13,19 @@ import type { Editor as TiptapEditor } from "@tiptap/core"
 
 import { cn } from "@/lib/utils"
 
+import { SMOOTH_SKIP } from "./extensions"
 import { pressHandlers, type PressEvent } from "./press"
 
 /** no column goes under this share of its row */
 const MIN_SHARE = 0.1
 /** how far either side of the gap the bar still answers */
 const REACH = 6
+/** how near a resting place the bar has to come to settle on it, in px */
+const SNAP = 10
+/** the row's even splits a boundary settles on */
+const SPLITS = [1 / 4, 1 / 3, 1 / 2, 2 / 3, 3 / 4]
+/** how quickly the row catches the boundary up, in ms: a time constant */
+const EASE = 40
 
 interface Gap {
   row: HTMLElement
@@ -42,6 +49,8 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     to: number
   } | null>(null)
   const [dragging, setDragging] = React.useState(false)
+  /** the bar rests on one of the row's even splits */
+  const [snapped, setSnapped] = React.useState(false)
   const hit = React.useRef<Gap | null>(null)
   const draggingRef = React.useRef(false)
   draggingRef.current = dragging
@@ -61,17 +70,15 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
         const cells = [...row.children].filter(
           (c): c is HTMLElement => c instanceof HTMLElement
         )
-        const media = row.dataset.media === "true"
         for (let i = 0; i < cells.length - 1; i++) {
           const a = cells[i].getBoundingClientRect()
           const b = cells[i + 1].getBoundingClientRect()
           // stacked, on a narrow page: no gap to take hold of
           if (b.left <= a.right) continue
           if (x < a.right - REACH || x > b.left + REACH) continue
-          // a text row's second cell carries the hairline on its left
-          // edge: the bar stands on it. A picture row has no rule, so the
-          // middle.
-          const at = media ? (a.right + b.left) / 2 : b.left
+          // the bar stands in the middle of the gap: on a text row's
+          // hairline, and where a picture row's would be
+          const at = (a.right + b.left) / 2
           return {
             row,
             cells,
@@ -149,7 +156,6 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     if (pos === null) return
     e.preventDefault()
     const { index } = gap
-    const media = gap.row.dataset.media === "true"
     const start = gap.cells.map((c) => c.getBoundingClientRect().width)
     const total = start.reduce((sum, w) => sum + w, 0)
     const pair = start[index] + start[index + 1]
@@ -158,6 +164,27 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     const original =
       (editor.state.doc.nodeAt(pos)?.attrs.widths as number[] | null) ?? null
     let shares = start.map((w) => w / total)
+
+    // The places the boundary settles on, as the width of the column before
+    // it: the row cut in quarters or thirds, the two columns even, and
+    // either one as wide as another column of the row, so a row of three
+    // can be put back even by eye.
+    const before = start.slice(0, index).reduce((sum, w) => sum + w, 0)
+    const rests = [
+      ...SPLITS.map((f) => total * f - before),
+      pair / 2,
+      ...start.flatMap((w, i) =>
+        i === index || i === index + 1 ? [] : [w, pair - w]
+      ),
+    ].filter((w) => w >= floor && w <= pair - floor)
+    const settle = (w: number) => {
+      let best: number | null = null
+      for (const r of rests) {
+        const off = Math.abs(r - w)
+        if (off <= SNAP && (best === null || off < Math.abs(best - w))) best = r
+      }
+      return best
+    }
 
     // The shares go through the document, never onto the row's element: an
     // inline style written there is a mutation ProseMirror answers by
@@ -171,6 +198,7 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
         ...node.attrs,
         widths,
       })
+      tr.setMeta(SMOOTH_SKIP, true)
       if (!record) tr.setMeta("addToHistory", false)
       editor.view.dispatch(tr)
     }
@@ -179,9 +207,17 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     draggingRef.current = true
     document.body.classList.add("rte-col-drag")
 
-    const move = (ev: PointerEvent) => {
-      const dx = ev.clientX - x0
-      const a = Math.min(Math.max(start[index] + dx, floor), pair - floor)
+    // The pointer sets where the boundary is headed; the row eases there a
+    // frame at a time, so a snap, and the text wrapping again with it,
+    // glides over instead of jumping. Each frame closes the same part of
+    // what is left whatever the frame rate.
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    let target = start[index]
+    let shown = start[index]
+    let last = 0
+    let frame = 0
+    let released = false
+    const draw = (a: number) => {
       const next = start.slice()
       next[index] = a
       next[index + 1] = pair - a
@@ -196,24 +232,57 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
       )
       const ra = cells[index]?.getBoundingClientRect()
       const rb = cells[index + 1]?.getBoundingClientRect()
+      // the text wraps again as the columns change: the bar grows and
+      // shrinks with the row, as the hairline does
+      const rr = row.getBoundingClientRect()
       if (ra && rb)
         setBar((b) =>
           b
             ? {
                 ...b,
-                left: media ? (ra.right + rb.left) / 2 : rb.left,
+                top: rr.top,
+                height: rr.height,
+                left: (ra.right + rb.left) / 2,
                 from: ra.right - REACH,
                 to: rb.left + REACH,
               }
             : b
         )
     }
+    const step = (now: number) => {
+      frame = 0
+      const dt = last ? Math.min(now - last, 64) : 16
+      last = now
+      const left = target - shown
+      shown =
+        still || Math.abs(left) < 0.3
+          ? target
+          : shown + left * (1 - Math.exp(-dt / EASE))
+      draw(shown)
+      if (shown !== target) frame = requestAnimationFrame(step)
+      else if (released) finish()
+      else last = 0
+    }
+    const move = (ev: PointerEvent) => {
+      const dx = ev.clientX - x0
+      const free = Math.min(Math.max(start[index] + dx, floor), pair - floor)
+      const rest = settle(free)
+      target = rest ?? free
+      setSnapped(rest !== null)
+      if (!frame) frame = requestAnimationFrame(step)
+    }
     const up = () => {
       window.removeEventListener("pointermove", move)
       window.removeEventListener("pointerup", up)
       window.removeEventListener("pointercancel", up)
+      released = true
+      // the row lands where it was headed before the drag is written down
+      if (!frame) finish()
+    }
+    const finish = () => {
       document.body.classList.remove("rte-col-drag")
       setDragging(false)
+      setSnapped(false)
       draggingRef.current = false
       write(original, false)
       write(shares, true)
@@ -238,7 +307,7 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     : null
   return createPortal(
     <div
-      className={cn("rte-cr", dragging && "is-dragging")}
+      className={cn("rte-cr", dragging && "is-dragging", snapped && "is-snapped")}
       style={
         bar && zone
           ? {

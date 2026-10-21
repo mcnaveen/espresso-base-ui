@@ -97,6 +97,7 @@ import {
 import { EditorContent, EditorProvider } from "./core"
 import { RichTextKit } from "./kit"
 import { BlockHandle } from "./block-handle"
+import { BlockMarquee } from "./block-select"
 import { ColumnResizer } from "./column-resizer"
 import { LinkClickCard } from "./link-card"
 import { EditorStyles } from "./styles"
@@ -559,14 +560,6 @@ function RichTextToolbar({
             <DropdownMenuItem onClick={() => chain().insertImageSlot().run()}>
               <ImageIcon className="size-4" /> Image
             </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Grid3Icon className="size-4" /> Image columns
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {imageColumnsItems()}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
             <DropdownMenuItem onClick={() => videoRef.current?.click()}>
               <VideoIcon className="size-4" /> Video
             </DropdownMenuItem>
@@ -623,7 +616,7 @@ function RichTextToolbar({
                 <Grid3Icon className="size-4" /> Columns
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
-                {[2, 3, 4].map((n) => (
+                {[2, 3, 4, 5].map((n) => (
                   <DropdownMenuItem
                     key={n}
                     onClick={() => chain().insertColumns(n).run()}
@@ -1644,6 +1637,7 @@ export function RichTextEditor({
             {editor && editable && <BlockHandle editor={editor} />}
             {editor && editable && <TableControls editor={editor} />}
             {editor && editable && <ColumnResizer editor={editor} />}
+            {editor && editable && <BlockMarquee editor={editor} />}
             {editor && editable && <LinkClickCard editor={editor} />}
             {editor && editable && (
               <BubbleMenu
@@ -1664,7 +1658,10 @@ export function RichTextEditor({
                 <SelectionBar editor={editor} />
               </BubbleMenu>
             )}
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div
+              data-slot="rich-text-editor-scroll"
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
               <div className="px-4 py-8 sm:px-8" onClick={onEditorClick}>
                 <EditorContent
                   editor={editor}

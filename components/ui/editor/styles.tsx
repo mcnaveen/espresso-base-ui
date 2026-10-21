@@ -134,10 +134,11 @@ const CSS = `
   margin-top: 4px;
 }
 
-/* ---- columns: side by side on a 24px gutter, a hairline between ---- */
+/* ---- columns: side by side on a 56px gutter, a hairline down its middle
+   and, right of it, room for the next column's blocks' grip ---- */
 .rte-doc [data-type='columns'] {
   display: grid;
-  gap: 24px;
+  gap: 56px;
   margin: 8px 0;
 }
 .rte-doc [data-type='columns'][data-count='1'] {
@@ -152,14 +153,23 @@ const CSS = `
 .rte-doc [data-type='columns'][data-count='4'] {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
-.rte-doc [data-type='column'] {
-  min-width: 0;
-  border-left: 1px solid var(--border);
-  padding-left: 12px;
+.rte-doc [data-type='columns'][data-count='5'] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
-.rte-doc [data-type='column']:first-child {
-  border-left: 0;
-  padding-left: 0;
+.rte-doc [data-type='column'] {
+  position: relative;
+  min-width: 0;
+}
+/* the hairline stands in the gutter, as far from either column's text */
+.rte-doc [data-type='column'] + [data-type='column']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -28.5px;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
 }
 .rte-doc [data-type='column'] > *:first-child {
   margin-top: 0;
@@ -171,9 +181,8 @@ const CSS = `
   .rte-doc [data-type='columns'] {
     grid-template-columns: 1fr !important;
   }
-  .rte-doc [data-type='column'] {
-    border-left: 0;
-    padding-left: 0;
+  .rte-doc [data-type='column'] + [data-type='column']::before {
+    display: none;
   }
 }
 
@@ -182,9 +191,11 @@ const CSS = `
 .rte-doc [data-type='columns'][data-media='true'] {
   gap: 16px;
 }
-.rte-doc [data-type='columns'][data-media='true'] [data-type='column'] {
-  border-left: 0;
-  padding-left: 0;
+.rte-doc
+  [data-type='columns'][data-media='true']
+  [data-type='column']
+  + [data-type='column']::before {
+  display: none;
 }
 .rte-doc [data-type='columns'][data-media='true'] img {
   width: 100%;
@@ -274,13 +285,48 @@ const CSS = `
 .rte-details summary::-webkit-details-marker {
   display: none;
 }
+/* the fold opens and closes smoothly, in CSS alone: the body is a two-row
+   grid (summary, content) whose content row eases between 0fr and 1fr, the
+   one height a browser will animate to and from its content's own. Closed,
+   the content is also made invisible once folded, so the caret and the
+   keys pass it by as they did when it was not drawn at all */
+.rte-details-body {
+  display: grid;
+  grid-template-rows: auto 0fr;
+  transition: grid-template-rows 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+.rte-details.is-open > .rte-details-body {
+  grid-template-rows: auto 1fr;
+}
 .rte-details [data-type='details-content'] {
-  display: none;
-  padding-top: 4px;
+  min-height: 0;
+  overflow: hidden;
+  /* room inside the clip for what draws past a block's edge (a chosen
+     picture's ring, a list's numbers), given back by the margin */
+  margin: -8px;
+  padding: 8px;
   color: var(--secondary-foreground);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    padding-top 220ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 160ms ease-out,
+    visibility 0s linear 220ms;
 }
 .rte-details.is-open [data-type='details-content'] {
-  display: block;
+  padding-top: 12px;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    padding-top 220ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 200ms ease-in 40ms,
+    visibility 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rte-details-body,
+  .rte-details [data-type='details-content'] {
+    transition: none;
+  }
 }
 /* an empty toggle says what it is, as Notion's does — in the editor's own
    placeholder gray, gone the moment there is text. Not in read mode. */
@@ -575,6 +621,17 @@ ${cellTintRules}
 .rte-doc .rte-figure > img,
 .rte-doc .rte-media img {
   margin: 0;
+}
+/* in a column a picture is the cell's own block: the first one stands at
+   the column's top with its neighbours (a slot, a line of text), the last
+   one ends it, as any first and last block in a column does */
+.rte-doc [data-type='column'] > :first-child:is(.rte-figure, .rte-media, img),
+.rte-doc [data-type='column'] > :first-child > :is(.rte-figure, .rte-media, .rte-player) {
+  margin-top: 0;
+}
+.rte-doc [data-type='column'] > :last-child:is(.rte-figure, .rte-media, img),
+.rte-doc [data-type='column'] > :last-child > :is(.rte-figure, .rte-media, .rte-player) {
+  margin-bottom: 0;
 }
 /* a cell's picture fills its cell until it is resized; a resized one
    keeps its width (never wider than the cell) and the ring hugs it */
@@ -1071,16 +1128,16 @@ body.rte-tc-dragging .rte-tc-handle {
 .rte-bh-handle.is-on-media:active {
   background-color: rgb(0 0 0 / 0.6);
 }
-/* over a column's text, as a picture's grip is over the picture: a solid
-   card, ruled, so the dots read over the letters they cover */
-.rte-bh-handle.is-on-text {
-  background-color: var(--background);
-  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.06);
-  color: var(--muted-foreground);
+/* a column block's grip, in the gutter between the hairline and its text:
+   a size down, so it stands clear of both */
+.rte-bh-handle.is-in-gutter {
+  width: 12px;
+  height: 20px;
+  border-radius: 3px;
 }
-.rte-bh-handle.is-on-text:hover {
-  background-color: var(--secondary);
-  color: var(--foreground);
+.rte-bh-handle.is-in-gutter svg {
+  width: 12px;
+  height: 12px;
 }
 /* out of sight, not out of the way: the browser ends a drag whose source
    stops taking pointer events */
@@ -1189,9 +1246,62 @@ body.rte-tc-dragging .rte-tc-handle {
 .rte-cr.is-dragging .rte-cr-bar {
   background: var(--muted-foreground);
 }
+/* resting on an even split: the bar darkens so the settle is seen */
+.rte-cr.is-snapped .rte-cr-bar {
+  background: var(--foreground);
+}
 body.rte-col-drag {
   cursor: col-resize;
   user-select: none;
+}
+
+/* ================= the box selection (BlockMarquee) ================ */
+/* Notion's blue: the box drawn faint with a hairline, each chosen block
+   tinted on top of its own fill (an inset shadow paints above a block's
+   background and under its content) and reaching 3px past its sides —
+   not above or below, where two chosen blocks would overlap darker */
+.rte {
+  --rte-chosen: rgb(35 131 226 / 0.14);
+}
+.dark .rte {
+  --rte-chosen: rgb(35 131 226 / 0.24);
+}
+.rte-marquee-box {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  background: rgb(35 131 226 / 0.1);
+  border: 1px solid rgb(35 131 226 / 0.35);
+  border-radius: 2px;
+}
+body.rte-marquee {
+  user-select: none;
+  cursor: default;
+}
+/* while a box, a column bar or a block is dragged, an embedded page (a
+   video, an embed) takes no pointer: the moves stay with the editor */
+body.rte-marquee iframe,
+body.rte-col-drag iframe,
+body.rte-block-drag iframe {
+  pointer-events: none;
+}
+body.rte-marquee .rte-bh-handle,
+body.rte-marquee .rte-cr {
+  display: none;
+}
+.ProseMirror .rte-block-chosen {
+  border-radius: 4px;
+  box-shadow:
+    -3px 0 0 0 var(--rte-chosen),
+    3px 0 0 0 var(--rte-chosen),
+    inset 0 0 0 9999px var(--rte-chosen);
+}
+/* the caret waits unseen while blocks are chosen, and no text shows chosen */
+.ProseMirror.has-chosen-blocks {
+  caret-color: transparent;
+}
+.ProseMirror.has-chosen-blocks ::selection {
+  background: transparent;
 }
 
 /* ================= the link card (RteLinkPanel) ================ */

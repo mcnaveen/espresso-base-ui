@@ -32,6 +32,7 @@ import { Placeholder } from "@tiptap/extensions"
 
 import { ReactNodeViewRenderer } from "@tiptap/react"
 
+import { BlockSelect } from "./block-select"
 import { LinkEditor } from "./link-card"
 import { EmbedView, ImageView } from "./media"
 import {
@@ -48,6 +49,10 @@ import {
   Embed,
   embedFrameAttributes,
   AtomSelection,
+  ListBackspace,
+  TabKeys,
+  TabTrap,
+  SmoothBlocks,
   EmbedSlot,
   ImageSlot,
   Limit,
@@ -84,6 +89,9 @@ export interface RichTextKitOptions {
   slashCommands?: false
   subscript?: false
   superscript?: false
+  /** Tab kept on the page, Notion's way (off: Tab moves the focus on, as a
+   * form's field should let it) */
+  tabKeys?: false
   /** the most characters the document holds */
   limit?: number | false
 }
@@ -269,7 +277,17 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
     if (options.columns !== false) extensions.push(Columns, Column)
     if (options.image !== false) extensions.push(ImageSlot)
     if (options.embed !== false) extensions.push(EmbedSlot)
-    extensions.push(LinkOn, LinkEditor, LinkPaste, CommentMark, AtomSelection)
+    extensions.push(
+      LinkOn,
+      LinkEditor,
+      LinkPaste,
+      CommentMark,
+      AtomSelection,
+      ListBackspace,
+      SmoothBlocks,
+      BlockSelect
+    )
+    if (options.tabKeys !== false) extensions.push(TabKeys, TabTrap)
     if (options.callout !== false) extensions.push(Callout)
     if (options.attachment !== false) extensions.push(Attachment)
     if (options.audio !== false) extensions.push(Audio)

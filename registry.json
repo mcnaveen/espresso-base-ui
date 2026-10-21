@@ -122,6 +122,11 @@
           "path": "registry/espresso/editor/press.ts",
           "type": "registry:ui",
           "target": "components/ui/editor/press.ts"
+        },
+        {
+          "path": "registry/espresso/editor/block-select.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/editor/block-select.tsx"
         }
       ]
     },

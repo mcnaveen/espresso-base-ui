@@ -26,7 +26,8 @@ import {
 } from "@/components/ui/tooltip"
 import { DragIcon } from "@/components/ui/rich-text-editor-icons"
 import { pressHandlers } from "./press"
-import { type View } from "./extensions"
+import { blockSelectKey, chosenBlocks, eachChosen } from "./block-select"
+import { BLOCKS_SETTLED, type View } from "./extensions"
 
 /** how far left of the document the grip still answers the pointer */
 const GUTTER = 72
@@ -43,8 +44,25 @@ const FIRST_LINE = "p, h1, h2, h3, h4, h5, h6, summary, pre"
 const SKIP =
   ".ProseMirror-gapcursor, .ProseMirror-widget, .ProseMirror-separator, br"
 const ROW = '[data-type="columns"]'
+const TOGGLE = '[data-type="details"]'
+const LIST_TYPES = new Set(["bulletList", "orderedList", "taskList"])
+const ITEM_TYPES = new Set(["listItem", "taskItem"])
 const MEDIA_ROW = '[data-type="columns"][data-media="true"]'
-const MAX_COLUMNS = 4
+/** a text column's grip: smaller, centred in the half-gutter between the
+ * hairline and the text (styles.tsx: a 56px gutter, the line mid-way) */
+const TEXT_GRIP_WIDTH = 12
+const TEXT_GRIP_HEIGHT = 20
+const HALF_GUTTER = 28
+/** how far left of a text column's edge its blocks still answer the
+ * pointer: across the grip, so the way from the text to it keeps it */
+const TEXT_GRIP_ROOM = HALF_GUTTER - 4
+/** a first column's grip stands this far before its text, and the
+ * layout's own grip this far before that one */
+/** a textless block up to this tall is short enough to centre a grip on */
+const SHORT_BLOCK = 64
+const FIRST_GRIP_GAP = 4
+const ROW_GRIP_GAP = 2
+const MAX_COLUMNS = 5
 /**
  * Beside a block, as Notion drops one: a pointer this far into a block
  * from its left edge, or near its right edge, lands the block beside it
@@ -117,6 +135,46 @@ const spans = (el: Element, y: number) => {
   return y >= r.top && y < r.bottom
 }
 
+/** a toggle's title and body, as drawn */
+function toggleParts(el: Element) {
+  const body = el.querySelector(":scope > .rte-details-body")
+  return {
+    summary: body?.querySelector<HTMLElement>(":scope > summary") ?? null,
+    content:
+      body?.querySelector<HTMLElement>(':scope > [data-type="details-content"]') ??
+      null,
+  }
+}
+
+/** the block of an open toggle's body the pointer is at — none on its
+ * title, which is the toggle's own */
+function toggleChild(el: HTMLElement, y: number) {
+  if (!el.classList.contains("is-open")) return null
+  const { content } = toggleParts(el)
+  if (!content) return null
+  const c = content.getBoundingClientRect()
+  if (y < c.top || y >= c.bottom) return null
+  let nearest: HTMLElement | null = null
+  let gap = Infinity
+  for (const child of content.children) {
+    if (!(child instanceof HTMLElement) || child.matches(SKIP)) continue
+    const r = child.getBoundingClientRect()
+    const d = y < r.top ? r.top - y : y >= r.bottom ? y - r.bottom : 0
+    if (d < gap) {
+      gap = d
+      nearest = child
+    }
+  }
+  return nearest
+}
+
+/** an empty line, alone in a toggle's body: a block set by it takes its
+ * place */
+const loneToggleLine = (el: Element) =>
+  el.parentElement?.matches('[data-type="details-content"]') === true &&
+  el.parentElement.childElementCount === 1 &&
+  isEmptyLine(el)
+
 /** the block under the pointer: a top-level block, or a list's item */
 function blockAt(
   view: View,
@@ -148,10 +206,13 @@ function blockAt(
   // in a row each cell's own block has the grip, so one block moves on its
   // own; the row itself answers from the gaps between its cells
   if (block.matches(ROW)) {
+    // a text row's cell reaches into the gutter on its left, over its
+    // blocks' grip
+    const room = block.matches(MEDIA_ROW) ? 0 : TEXT_GRIP_ROOM
     const cell = [...block.children].find(
       (c): c is HTMLElement =>
         c instanceof HTMLElement &&
-        x >= c.getBoundingClientRect().left &&
+        x >= c.getBoundingClientRect().left - room &&
         x < c.getBoundingClientRect().right
     )
     const blocks = cell
@@ -169,7 +230,15 @@ function blockAt(
     }
     if (inner) block = inner
   }
-  while (block.matches("ul, ol")) {
+  // into an open toggle's body, and a list's items, as deep as they go
+  for (;;) {
+    if (block.matches(TOGGLE)) {
+      const inner = toggleChild(block, y)
+      if (!inner) break
+      block = inner
+      continue
+    }
+    if (!block.matches("ul, ol")) break
     const item: HTMLElement | undefined = [...block.children].find(
       (c): c is HTMLElement => c instanceof HTMLElement && spans(c, y)
     )
@@ -302,7 +371,7 @@ function dropBeside(
   const $to = state.doc.resolve(to)
 
   // a column's only block beside another column of its own layout: the
-  // columns change places in one step (inserting first would make a fifth
+  // columns change places in one step (inserting first would make a sixth
   // column of a full row, which the layout does not hold); their shares
   // go with them
   if (
@@ -385,11 +454,74 @@ function dropBeside(
   return tr
 }
 
+/** the cell a run from `from` to `to` is the whole of, in a row of prose:
+ * carried off, it takes its cell along */
+function wholeCell(state: View["state"], from: number, to: number) {
+  const $from = state.doc.resolve(from)
+  if ($from.parent.type !== state.schema.nodes.column) return null
+  if (from !== $from.start() || to !== $from.end()) return null
+  if ($from.node($from.depth - 1).attrs.media) return null
+  return { pos: $from.before(), row: $from.before($from.depth - 1) }
+}
+
+/**
+ * The run of blocks from `from` to `to` set beside the block at `to`, on
+ * `side`, as one new cell: of the row `at` is in, or, `at` standing alone,
+ * of a row of two made of them both. Where the run came from closes up
+ * behind it. The range the run now fills is returned with the step.
+ */
+function dropRunBeside(
+  state: View["state"],
+  from: number,
+  to: number,
+  at: number,
+  side: "left" | "right"
+) {
+  const { schema } = state
+  const columns = schema.nodes.columns
+  const column = schema.nodes.column
+  const beside = state.doc.nodeAt(at)
+  if (!columns || !column || !beside) return null
+  const content = state.doc.slice(from, to).content
+  const tr = state.tr
+  const $at = state.doc.resolve(at)
+  let start: number
+  if ($at.parent.type === column) {
+    const cellPos = $at.before()
+    const spot = side === "left" ? cellPos : cellPos + $at.parent.nodeSize
+    tr.insert(spot, column.create(null, content))
+    start = spot + 1
+    const rowPos = $at.before($at.depth - 1)
+    const row = tr.doc.nodeAt(rowPos)!
+    tr.setNodeMarkup(rowPos, undefined, {
+      ...row.attrs,
+      count: row.childCount,
+      widths: null,
+    })
+  } else {
+    const ours = column.create(null, content)
+    const theirs = column.create(null, beside)
+    const cells = side === "left" ? [ours, theirs] : [theirs, ours]
+    tr.replaceWith(at, at + beside.nodeSize, columns.create({ count: 2 }, cells))
+    start = side === "left" ? at + 2 : at + 2 + theirs.nodeSize
+  }
+  const placed = tr.steps.length
+  const landed = { from: start, to: start + content.size }
+
+  // the run leaves where it was
+  leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+  const after = tr.mapping.slice(placed)
+  return {
+    tr,
+    landed: { from: after.map(landed.from, 1), to: after.map(landed.to, -1) },
+  }
+}
+
 export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   const [target, setTarget] = React.useState<HTMLElement | null>(null)
   const [point, setPoint] = React.useState({ left: 0, top: 0 })
   const [onMedia, setOnMedia] = React.useState(false)
-  const [onText, setOnText] = React.useState(false)
+  const [inGutter, setInGutter] = React.useState(false)
   const layerRef = React.useRef<HTMLDivElement>(null)
   const targetRef = React.useRef<HTMLElement | null>(null)
   // not state: a re-render of the grip while it is the source of a drag
@@ -402,7 +534,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     source: {
       el: HTMLElement
       pos: number
-      run?: { to: number; doms: HTMLElement[] }
+      run?: { to: number; doms: HTMLElement[]; chosen: boolean }
     } | null
     grab: { dx: number; dy: number }
     ghost: HTMLElement | null
@@ -412,6 +544,8 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       pos: number
       before: boolean
       side: "left" | "right" | null
+      /** into the toggle, first in its body */
+      into?: boolean
     } | null
   }>({
     dragging: false,
@@ -431,6 +565,18 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
    */
   const selectedRun = React.useCallback(() => {
     if (editor.isDestroyed) return null
+    // blocks chosen with the box are a run too, one block or many
+    const chosen = chosenBlocks(editor.state)
+    if (chosen) {
+      const doms: HTMLElement[] = []
+      eachChosen(editor.state.doc, chosen, (_node, pos) => {
+        const dom = editor.view.nodeDOM(pos)
+        if (dom instanceof HTMLElement) doms.push(dom)
+      })
+      return doms.length
+        ? { from: chosen.from, to: chosen.to, doms, chosen: true }
+        : null
+    }
     const sel = editor.state.selection
     if (sel.empty || sel instanceof NodeSelection) return null
     const range = sel.$from.blockRange(sel.$to)
@@ -442,7 +588,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       if (dom instanceof HTMLElement) doms.push(dom)
       pos += range.parent.child(i).nodeSize
     }
-    return { from: range.start, to: range.end, doms }
+    return { from: range.start, to: range.end, doms, chosen: false }
   }, [editor])
   const inRun = (run: { doms: HTMLElement[] }, el: Element) =>
     run.doms.some((d) => d === el || d.contains(el))
@@ -477,7 +623,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     }
     const media = inCell(el)
     setOnMedia(media)
-    setOnText(false)
+    setInGutter(false)
     // a cell's block has no margin of its own to stand the grip in: it
     // sits on the picture, in its top-left corner, as the media's chrome
     if (media) {
@@ -488,20 +634,50 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const first = el.matches(FIRST_LINE)
       ? el
       : (el.querySelector(FIRST_LINE) ?? el)
-    const fr = first.getBoundingClientRect()
-    const lineHeight = parseFloat(getComputedStyle(first).lineHeight) || SIZE
+    const box = first.getBoundingClientRect()
+    const fcs = getComputedStyle(first)
+    // the first line starts inside the block's padding (a code block's)
+    const inset =
+      first === el && el.matches("pre")
+        ? parseFloat(fcs.paddingTop) + parseFloat(fcs.borderTopWidth)
+        : 0
+    const fr = { top: box.top + inset, height: box.height - inset }
+    const lineHeight = parseFloat(fcs.lineHeight) || SIZE
     const line = Math.min(lineHeight, fr.height)
-    const top = fr.top + (line - SIZE) / 2
+    // a short block with no line of text (an Add Image slot, a divider)
+    // has its grip centred on it, as a single line's is
+    const textless = first === el && !el.matches(FIRST_LINE)
+    const top =
+      textless && r.height <= SHORT_BLOCK
+        ? r.top + (r.height - SIZE) / 2
+        : fr.top + (line - SIZE) / 2
     // an item's grip sits before its marker, at its list's edge
     const edge = el.matches("li")
       ? (el.parentElement?.getBoundingClientRect().left ?? r.left)
       : r.left
-    // a block in a text row's column carries its grip as a picture in a
-    // picture row does: over its own top-left corner, on its first line,
-    // so the page's margin is the whole row's alone
+    // a block in a text row's column carries its grip in the gutter just
+    // before its text, on its first line, clear of the words
     if (inTextColumn(el)) {
-      setOnText(true)
-      setPoint({ top, left: edge })
+      setInGutter(true)
+      // the first column has the page's margin, not a gutter, before it:
+      // its grip keeps close to the words, leaving the layout's grip room
+      // to stand near the other blocks' grips
+      const first = !el.closest('[data-type="column"]')?.previousElementSibling
+      setPoint({
+        top: top + (SIZE - TEXT_GRIP_HEIGHT) / 2,
+        left: first
+          ? edge - FIRST_GRIP_GAP - TEXT_GRIP_WIDTH
+          : edge - (HALF_GUTTER + TEXT_GRIP_WIDTH) / 2,
+      })
+      return
+    }
+    // a text row's own grip stands out past its first column's block
+    // grips (in the margin, where they reach): the two never share a spot
+    if (el.matches(ROW) && !el.matches(MEDIA_ROW)) {
+      setPoint({
+        top,
+        left: edge - FIRST_GRIP_GAP - TEXT_GRIP_WIDTH - ROW_GRIP_GAP - WIDTH,
+      })
       return
     }
     // narrowed, it keeps its dots where the square grip had them
@@ -533,6 +709,9 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       setTarget(el)
       place()
     }
+    const onFrame = (event: MouseEvent) => {
+      if (event.target instanceof HTMLIFrameElement) onMove(event)
+    }
     const settle = () => place()
     const hide = () => {
       if (drag.current.dragging || drag.current.pressed) return
@@ -540,13 +719,20 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       setTarget(null)
     }
     editor.on("transaction", settle)
+    const root = editor.view.dom
+    root.addEventListener(BLOCKS_SETTLED, settle)
     document.addEventListener("mousemove", onMove, true)
+    // the pointer gone onto an embedded page (a video, an embed) sends no
+    // move here: its frame's mouseover still says which block it is on
+    document.addEventListener("mouseover", onFrame, true)
     document.addEventListener("scroll", settle, true)
     document.addEventListener("mouseleave", hide)
     window.addEventListener("resize", settle)
     return () => {
       editor.off("transaction", settle)
+      root.removeEventListener(BLOCKS_SETTLED, settle)
       document.removeEventListener("mousemove", onMove, true)
+      document.removeEventListener("mouseover", onFrame, true)
       document.removeEventListener("scroll", settle, true)
       document.removeEventListener("mouseleave", hide)
       window.removeEventListener("resize", settle)
@@ -580,7 +766,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   /**
    * A column's only block set beside another column of the same layout:
    * the columns change places, their number stays, so even a full row
-   * (four) takes it
+   * (five) takes it
    */
   const reorders = (source: HTMLElement, el: HTMLElement) => {
     const from = source.parentElement
@@ -631,17 +817,41 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
           box: inner.getBoundingClientRect(),
         }
       }
-      // a run lands outside itself, and only above or below a block
+      // a run lands outside itself
       if (d.source.run && inRun(d.source.run, el)) return null
       const pos = posOf(editor.view, el)
       if (pos === null) return null
       const box = el.getBoundingClientRect()
+      // the lower half of a toggle's title: into the toggle, first in its
+      // body, its line set in under the title as Notion indents it
+      if (el.matches(TOGGLE)) {
+        const { summary } = toggleParts(el)
+        const s = summary?.getBoundingClientRect()
+        if (s && y >= s.top + s.height / 2 && y < s.bottom)
+          return {
+            el,
+            pos,
+            before: false,
+            side: null,
+            into: true,
+            box: new DOMRect(s.left, s.top, s.width, s.height),
+          }
+      }
       const zone = Math.min(SIDE_ZONE, box.width / 4)
       let side: "left" | "right" | null = null
+      const run = d.source.run
+      // a run stands beside a block as a new cell — never one holding a row
+      // itself, for a row is no column's block
+      const runSideable =
+        !!run &&
+        sideable(el) &&
+        !el.closest(MEDIA_ROW) &&
+        !run.doms.some((x) => x.matches(ROW) || x.querySelector(ROW))
       if (
-        !d.source.run &&
-        (sideable(el) || reorders(d.source.el, el)) &&
-        !swapsWith(d.source.el, el)
+        run
+          ? runSideable
+          : (sideable(el) || reorders(d.source.el, el)) &&
+            !swapsWith(d.source.el, el)
       ) {
         if (x >= box.left + SIDE_INSET && x < box.left + SIDE_INSET + zone)
           side = "left"
@@ -671,24 +881,84 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     [editor]
   )
 
-  /** a run set down at `edge`, taken from where it was, still selected */
+  /**
+   * Where a landing sets the carried block: before or after its block, or
+   * first in a toggle's body. A toggle's lone empty line gives its place
+   * up, and a closed toggle taken into opens to show what came in.
+   */
+  const landingEdge = (
+    state: View["state"],
+    at: { el: Element; pos: number; before: boolean; into?: boolean }
+  ) => {
+    const node = state.doc.nodeAt(at.pos)
+    if (!node) return null
+    if (at.into && node.childCount === 2) {
+      const body = node.lastChild!
+      const edge = at.pos + 1 + node.firstChild!.nodeSize + 1
+      const first = body.firstChild
+      const lone =
+        body.childCount === 1 && first?.isTextblock && first.content.size === 0
+          ? edge
+          : null
+      return { edge, lone, open: node.attrs.open === false ? at.pos : null }
+    }
+    return {
+      edge: at.before ? at.pos : at.pos + node.nodeSize,
+      lone: loneToggleLine(at.el) ? at.pos : null,
+      open: null,
+    }
+  }
+  /** a toggle opened, and its lone empty line given up, in `tr` */
+  const settleToggle = (
+    tr: View["state"]["tr"],
+    spot: { lone: number | null; open: number | null },
+    phase: "before" | "after"
+  ) => {
+    if (phase === "before") {
+      if (spot.open === null) return
+      const t = tr.doc.nodeAt(spot.open)
+      if (t) tr.setNodeMarkup(spot.open, undefined, { ...t.attrs, open: true })
+      return
+    }
+    if (spot.lone === null) return
+    const p = tr.mapping.map(spot.lone, 1)
+    const line = tr.doc.nodeAt(p)
+    if (line?.isTextblock && line.content.size === 0) tr.delete(p, p + line.nodeSize)
+  }
+
+  /** a run set down at `edge`, taken from where it was, still selected —
+   * and blocks chosen with the box still chosen, where they land on the
+   * page itself */
   const dropRun = React.useCallback(
-    (from: number, to: number, edge: number) => {
+    (
+      from: number,
+      to: number,
+      edge: number,
+      chosen: boolean,
+      spot: { lone: number | null; open: number | null }
+    ) => {
       if (edge >= from && edge <= to) return
       const { state } = editor.view
       const tr = state.tr
+      settleToggle(tr, spot, "before")
       tr.insert(edge, state.doc.slice(from, to).content)
       const placed = tr.steps.length
       const start = tr.mapping.map(edge, -1)
       const end = tr.mapping.map(edge, 1)
-      tr.delete(tr.mapping.map(from), tr.mapping.map(to))
+      leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+      settleToggle(tr, spot, "after")
       const after = tr.mapping.slice(placed)
-      tr.setSelection(
-        TextSelection.between(
-          tr.doc.resolve(after.map(start, 1)),
-          tr.doc.resolve(after.map(end, -1))
+      const landed = { from: after.map(start, 1), to: after.map(end, -1) }
+      if (chosen) {
+        tr.setSelection(TextSelection.near(tr.doc.resolve(landed.from)))
+        tr.setMeta(blockSelectKey, landed)
+      } else
+        tr.setSelection(
+          TextSelection.between(
+            tr.doc.resolve(landed.from),
+            tr.doc.resolve(landed.to)
+          )
         )
-      )
       editor.view.dispatch(tr.scrollIntoView())
       editor.view.focus()
     },
@@ -742,7 +1012,13 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     event.preventDefault()
     event.stopPropagation()
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
-    d.landing = { el: at.el, pos: at.pos, before: at.before, side: at.side }
+    d.landing = {
+      el: at.el,
+      pos: at.pos,
+      before: at.before,
+      side: at.side,
+      into: "into" in at ? at.into : false,
+    }
     const line = d.line
     if (!line) return
     if (at.side) {
@@ -791,12 +1067,27 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const node = state.doc.nodeAt(from.pos)
     const beside = state.doc.nodeAt(at.pos)
     if (!node || !beside) return
+    if (from.run && at.side) {
+      const out = dropRunBeside(state, from.pos, from.run.to, at.pos, at.side)
+      if (!out) return
+      const { tr, landed } = out
+      if (from.run.chosen) {
+        tr.setSelection(TextSelection.near(tr.doc.resolve(landed.from)))
+        tr.setMeta(blockSelectKey, landed)
+      } else
+        tr.setSelection(
+          TextSelection.between(
+            tr.doc.resolve(landed.from),
+            tr.doc.resolve(landed.to)
+          )
+        )
+      editor.view.dispatch(tr.scrollIntoView())
+      editor.view.focus()
+      return
+    }
     if (from.run) {
-      dropRun(
-        from.pos,
-        from.run.to,
-        at.before ? at.pos : at.pos + beside.nodeSize
-      )
+      const spot = landingEdge(state, at)
+      if (spot) dropRun(from.pos, from.run.to, spot.edge, from.run.chosen, spot)
       return
     }
     if (at.side) {
@@ -830,16 +1121,38 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       editor.view.focus()
       return
     }
-    const edge = at.before ? at.pos : at.pos + beside.nodeSize
+    const spot = landingEdge(state, at)
+    if (!spot) return
+    const { edge } = spot
     // the block is already there
     if (edge === from.pos || edge === from.pos + node.nodeSize) return
+    // a list's item keeps its kind: set down away from a list it goes in a
+    // list of its own, and into another kind of list it takes that kind's
+    // item; the only item of its list takes the list along
+    let moving = node
+    let source = { pos: from.pos, size: node.nodeSize }
+    const $src = state.doc.resolve(from.pos)
+    if (ITEM_TYPES.has(node.type.name)) {
+      const list = $src.parent
+      const $edge = state.doc.resolve(edge)
+      if (!LIST_TYPES.has($edge.parent.type.name))
+        moving = list.type.create(list.attrs, node)
+      else if ($edge.parent.type !== list.type) {
+        const item = $edge.parent.type.contentMatch.defaultType
+        if (item) moving = item.create(null, node.content)
+      }
+      if (list.childCount === 1)
+        source = { pos: $src.before(), size: list.nodeSize }
+    }
     // placed first, then taken from where it was: the insert only ever
     // adds, so the source's position still maps
     const tr = state.tr
-    const cell = emptiedCell(state, from.pos)
-    tr.insert(edge, node)
+    const cell = emptiedCell(state, source.pos)
+    settleToggle(tr, spot, "before")
+    tr.insert(edge, moving)
     const placed = tr.steps.length
-    leaveBehind(tr, from.pos, node.nodeSize, cell)
+    leaveBehind(tr, source.pos, source.size, cell)
+    settleToggle(tr, spot, "after")
     const to = tr.mapping.slice(placed).map(edge, at.before ? -1 : 1)
     // the block, wherever the fit put it, stays selected
     let moved: number | null = null
@@ -847,7 +1160,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       Math.max(0, to - 2),
       Math.min(tr.doc.content.size, to + node.nodeSize + 2),
       (n, pos) => {
-        if (moved === null && n.type === node.type && n.eq(node)) moved = pos
+        if (moved === null && n.type === moving.type && n.eq(moving)) moved = pos
         return moved === null
       }
     )
@@ -930,7 +1243,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       d.source = {
         el: first,
         pos: run.from,
-        run: { to: run.to, doms: run.doms },
+        run: { to: run.to, doms: run.doms, chosen: run.chosen },
       }
       d.grab = { dx: event.clientX - r0.left, dy: event.clientY - r0.top }
       const slice = editor.state.doc.slice(run.from, run.to)
@@ -1027,7 +1340,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
                   className={cn(
                     "rte-bh-handle",
                     onMedia && "is-on-media",
-                    onText && "is-on-text"
+                    inGutter && "is-in-gutter"
                   )}
                 >
                   <DragIcon className="size-4" />
