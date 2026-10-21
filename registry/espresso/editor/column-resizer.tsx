@@ -61,17 +61,15 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
         const cells = [...row.children].filter(
           (c): c is HTMLElement => c instanceof HTMLElement
         )
-        const media = row.dataset.media === "true"
         for (let i = 0; i < cells.length - 1; i++) {
           const a = cells[i].getBoundingClientRect()
           const b = cells[i + 1].getBoundingClientRect()
           // stacked, on a narrow page: no gap to take hold of
           if (b.left <= a.right) continue
           if (x < a.right - REACH || x > b.left + REACH) continue
-          // a text row's second cell carries the hairline on its left
-          // edge: the bar stands on it. A picture row has no rule, so the
-          // middle.
-          const at = media ? (a.right + b.left) / 2 : b.left
+          // the bar stands in the middle of the gap: on a text row's
+          // hairline, and where a picture row's would be
+          const at = (a.right + b.left) / 2
           return {
             row,
             cells,
@@ -149,7 +147,6 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
     if (pos === null) return
     e.preventDefault()
     const { index } = gap
-    const media = gap.row.dataset.media === "true"
     const start = gap.cells.map((c) => c.getBoundingClientRect().width)
     const total = start.reduce((sum, w) => sum + w, 0)
     const pair = start[index] + start[index + 1]
@@ -201,7 +198,7 @@ export function ColumnResizer({ editor }: { editor: TiptapEditor }) {
           b
             ? {
                 ...b,
-                left: media ? (ra.right + rb.left) / 2 : rb.left,
+                left: (ra.right + rb.left) / 2,
                 from: ra.right - REACH,
                 to: rb.left + REACH,
               }

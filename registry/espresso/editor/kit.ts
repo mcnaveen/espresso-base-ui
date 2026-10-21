@@ -48,6 +48,8 @@ import {
   Embed,
   embedFrameAttributes,
   AtomSelection,
+  ListBackspace,
+  SmoothBlocks,
   EmbedSlot,
   ImageSlot,
   Limit,
@@ -269,7 +271,15 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
     if (options.columns !== false) extensions.push(Columns, Column)
     if (options.image !== false) extensions.push(ImageSlot)
     if (options.embed !== false) extensions.push(EmbedSlot)
-    extensions.push(LinkOn, LinkEditor, LinkPaste, CommentMark, AtomSelection)
+    extensions.push(
+      LinkOn,
+      LinkEditor,
+      LinkPaste,
+      CommentMark,
+      AtomSelection,
+      ListBackspace,
+      SmoothBlocks
+    )
     if (options.callout !== false) extensions.push(Callout)
     if (options.attachment !== false) extensions.push(Attachment)
     if (options.audio !== false) extensions.push(Audio)

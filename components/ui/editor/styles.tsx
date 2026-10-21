@@ -134,10 +134,11 @@ const CSS = `
   margin-top: 4px;
 }
 
-/* ---- columns: side by side on a 24px gutter, a hairline between ---- */
+/* ---- columns: side by side on a 56px gutter, a hairline down its middle
+   and, right of it, room for the next column's blocks' grip ---- */
 .rte-doc [data-type='columns'] {
   display: grid;
-  gap: 24px;
+  gap: 56px;
   margin: 8px 0;
 }
 .rte-doc [data-type='columns'][data-count='1'] {
@@ -153,13 +154,19 @@ const CSS = `
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .rte-doc [data-type='column'] {
+  position: relative;
   min-width: 0;
-  border-left: 1px solid var(--border);
-  padding-left: 12px;
 }
-.rte-doc [data-type='column']:first-child {
-  border-left: 0;
-  padding-left: 0;
+/* the hairline stands in the gutter, as far from either column's text */
+.rte-doc [data-type='column'] + [data-type='column']::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -28.5px;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
 }
 .rte-doc [data-type='column'] > *:first-child {
   margin-top: 0;
@@ -171,9 +178,8 @@ const CSS = `
   .rte-doc [data-type='columns'] {
     grid-template-columns: 1fr !important;
   }
-  .rte-doc [data-type='column'] {
-    border-left: 0;
-    padding-left: 0;
+  .rte-doc [data-type='column'] + [data-type='column']::before {
+    display: none;
   }
 }
 
@@ -182,9 +188,11 @@ const CSS = `
 .rte-doc [data-type='columns'][data-media='true'] {
   gap: 16px;
 }
-.rte-doc [data-type='columns'][data-media='true'] [data-type='column'] {
-  border-left: 0;
-  padding-left: 0;
+.rte-doc
+  [data-type='columns'][data-media='true']
+  [data-type='column']
+  + [data-type='column']::before {
+  display: none;
 }
 .rte-doc [data-type='columns'][data-media='true'] img {
   width: 100%;
@@ -274,13 +282,48 @@ const CSS = `
 .rte-details summary::-webkit-details-marker {
   display: none;
 }
+/* the fold opens and closes smoothly, in CSS alone: the body is a two-row
+   grid (summary, content) whose content row eases between 0fr and 1fr, the
+   one height a browser will animate to and from its content's own. Closed,
+   the content is also made invisible once folded, so the caret and the
+   keys pass it by as they did when it was not drawn at all */
+.rte-details-body {
+  display: grid;
+  grid-template-rows: auto 0fr;
+  transition: grid-template-rows 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+.rte-details.is-open > .rte-details-body {
+  grid-template-rows: auto 1fr;
+}
 .rte-details [data-type='details-content'] {
-  display: none;
-  padding-top: 4px;
+  min-height: 0;
+  overflow: hidden;
+  /* room inside the clip for what draws past a block's edge (a chosen
+     picture's ring, a list's numbers), given back by the margin */
+  margin: -8px;
+  padding: 8px;
   color: var(--secondary-foreground);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    padding-top 220ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 160ms ease-out,
+    visibility 0s linear 220ms;
 }
 .rte-details.is-open [data-type='details-content'] {
-  display: block;
+  padding-top: 12px;
+  opacity: 1;
+  visibility: visible;
+  transition:
+    padding-top 220ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 200ms ease-in 40ms,
+    visibility 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rte-details-body,
+  .rte-details [data-type='details-content'] {
+    transition: none;
+  }
 }
 /* an empty toggle says what it is, as Notion's does — in the editor's own
    placeholder gray, gone the moment there is text. Not in read mode. */
@@ -1071,16 +1114,16 @@ body.rte-tc-dragging .rte-tc-handle {
 .rte-bh-handle.is-on-media:active {
   background-color: rgb(0 0 0 / 0.6);
 }
-/* over a column's text, as a picture's grip is over the picture: a solid
-   card, ruled, so the dots read over the letters they cover */
-.rte-bh-handle.is-on-text {
-  background-color: var(--background);
-  box-shadow: 0 0 0 1px var(--border), 0 1px 2px rgb(0 0 0 / 0.06);
-  color: var(--muted-foreground);
+/* a column block's grip, in the gutter between the hairline and its text:
+   a size down, so it stands clear of both */
+.rte-bh-handle.is-in-gutter {
+  width: 12px;
+  height: 20px;
+  border-radius: 3px;
 }
-.rte-bh-handle.is-on-text:hover {
-  background-color: var(--secondary);
-  color: var(--foreground);
+.rte-bh-handle.is-in-gutter svg {
+  width: 12px;
+  height: 12px;
 }
 /* out of sight, not out of the way: the browser ends a drag whose source
    stops taking pointer events */

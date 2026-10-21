@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/tooltip"
 import { DragIcon } from "@/components/ui/rich-text-editor-icons"
 import { pressHandlers } from "./press"
-import { type View } from "./extensions"
+import { BLOCKS_SETTLED, type View } from "./extensions"
 
 /** how far left of the document the grip still answers the pointer */
 const GUTTER = 72
@@ -44,6 +44,20 @@ const SKIP =
   ".ProseMirror-gapcursor, .ProseMirror-widget, .ProseMirror-separator, br"
 const ROW = '[data-type="columns"]'
 const MEDIA_ROW = '[data-type="columns"][data-media="true"]'
+/** a text column's grip: smaller, centred in the half-gutter between the
+ * hairline and the text (styles.tsx: a 56px gutter, the line mid-way) */
+const TEXT_GRIP_WIDTH = 12
+const TEXT_GRIP_HEIGHT = 20
+const HALF_GUTTER = 28
+/** how far left of a text column's edge its blocks still answer the
+ * pointer: across the grip, so the way from the text to it keeps it */
+const TEXT_GRIP_ROOM = HALF_GUTTER - 4
+/** a first column's grip stands this far before its text, and the
+ * layout's own grip this far before that one */
+/** a textless block up to this tall is short enough to centre a grip on */
+const SHORT_BLOCK = 64
+const FIRST_GRIP_GAP = 4
+const ROW_GRIP_GAP = 2
 const MAX_COLUMNS = 4
 /**
  * Beside a block, as Notion drops one: a pointer this far into a block
@@ -148,10 +162,13 @@ function blockAt(
   // in a row each cell's own block has the grip, so one block moves on its
   // own; the row itself answers from the gaps between its cells
   if (block.matches(ROW)) {
+    // a text row's cell reaches into the gutter on its left, over its
+    // blocks' grip
+    const room = block.matches(MEDIA_ROW) ? 0 : TEXT_GRIP_ROOM
     const cell = [...block.children].find(
       (c): c is HTMLElement =>
         c instanceof HTMLElement &&
-        x >= c.getBoundingClientRect().left &&
+        x >= c.getBoundingClientRect().left - room &&
         x < c.getBoundingClientRect().right
     )
     const blocks = cell
@@ -389,7 +406,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   const [target, setTarget] = React.useState<HTMLElement | null>(null)
   const [point, setPoint] = React.useState({ left: 0, top: 0 })
   const [onMedia, setOnMedia] = React.useState(false)
-  const [onText, setOnText] = React.useState(false)
+  const [inGutter, setInGutter] = React.useState(false)
   const layerRef = React.useRef<HTMLDivElement>(null)
   const targetRef = React.useRef<HTMLElement | null>(null)
   // not state: a re-render of the grip while it is the source of a drag
@@ -477,7 +494,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     }
     const media = inCell(el)
     setOnMedia(media)
-    setOnText(false)
+    setInGutter(false)
     // a cell's block has no margin of its own to stand the grip in: it
     // sits on the picture, in its top-left corner, as the media's chrome
     if (media) {
@@ -491,17 +508,40 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const fr = first.getBoundingClientRect()
     const lineHeight = parseFloat(getComputedStyle(first).lineHeight) || SIZE
     const line = Math.min(lineHeight, fr.height)
-    const top = fr.top + (line - SIZE) / 2
+    // a short block with no line of text (an Add Image slot, a divider)
+    // has its grip centred on it, as a single line's is
+    const textless = first === el && !el.matches(FIRST_LINE)
+    const top =
+      textless && r.height <= SHORT_BLOCK
+        ? r.top + (r.height - SIZE) / 2
+        : fr.top + (line - SIZE) / 2
     // an item's grip sits before its marker, at its list's edge
     const edge = el.matches("li")
       ? (el.parentElement?.getBoundingClientRect().left ?? r.left)
       : r.left
-    // a block in a text row's column carries its grip as a picture in a
-    // picture row does: over its own top-left corner, on its first line,
-    // so the page's margin is the whole row's alone
+    // a block in a text row's column carries its grip in the gutter just
+    // before its text, on its first line, clear of the words
     if (inTextColumn(el)) {
-      setOnText(true)
-      setPoint({ top, left: edge })
+      setInGutter(true)
+      // the first column has the page's margin, not a gutter, before it:
+      // its grip keeps close to the words, leaving the layout's grip room
+      // to stand near the other blocks' grips
+      const first = !el.closest('[data-type="column"]')?.previousElementSibling
+      setPoint({
+        top: top + (SIZE - TEXT_GRIP_HEIGHT) / 2,
+        left: first
+          ? edge - FIRST_GRIP_GAP - TEXT_GRIP_WIDTH
+          : edge - (HALF_GUTTER + TEXT_GRIP_WIDTH) / 2,
+      })
+      return
+    }
+    // a text row's own grip stands out past its first column's block
+    // grips (in the margin, where they reach): the two never share a spot
+    if (el.matches(ROW) && !el.matches(MEDIA_ROW)) {
+      setPoint({
+        top,
+        left: edge - FIRST_GRIP_GAP - TEXT_GRIP_WIDTH - ROW_GRIP_GAP - WIDTH,
+      })
       return
     }
     // narrowed, it keeps its dots where the square grip had them
@@ -540,12 +580,15 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       setTarget(null)
     }
     editor.on("transaction", settle)
+    const root = editor.view.dom
+    root.addEventListener(BLOCKS_SETTLED, settle)
     document.addEventListener("mousemove", onMove, true)
     document.addEventListener("scroll", settle, true)
     document.addEventListener("mouseleave", hide)
     window.addEventListener("resize", settle)
     return () => {
       editor.off("transaction", settle)
+      root.removeEventListener(BLOCKS_SETTLED, settle)
       document.removeEventListener("mousemove", onMove, true)
       document.removeEventListener("scroll", settle, true)
       document.removeEventListener("mouseleave", hide)
@@ -1027,7 +1070,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
                   className={cn(
                     "rte-bh-handle",
                     onMedia && "is-on-media",
-                    onText && "is-on-text"
+                    inGutter && "is-in-gutter"
                   )}
                 >
                   <DragIcon className="size-4" />

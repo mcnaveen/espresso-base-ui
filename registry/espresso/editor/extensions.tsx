@@ -859,6 +859,182 @@ export const Video = Node.create({
 /** the leaf blocks Safari will not hold a drawn selection around */
 const PLAYERS = new Set(["video", "youtube", "embed"])
 
+/**
+ * Blocks move smoothly as the document changes: a new line, a block added
+ * or taken away, a paragraph wrapping onto another line. The page's own
+ * View Transitions cannot serve an editor (they hold the change back until
+ * a screenshot is taken, and the editor's state must change at once), so
+ * the blocks are animated from where they stood to where they now are
+ * (FLIP): each top-level block and list item is measured after every
+ * change, the next change compares, and whatever moved slides the
+ * difference back to nothing; a block that is new fades in. The blocks
+ * stay live — the caret, typing and clicks are never held.
+ */
+const SMOOTH_MS = 200
+const SMOOTH_EASE = "cubic-bezier(0.2, 0, 0, 1)"
+/** more new blocks than this at once is a load or a paste, not an edit */
+const SMOOTH_MAX_NEW = 3
+
+/** sent on the editor's root when blocks have come to rest after a slide */
+export const BLOCKS_SETTLED = "rte-blocks-settled"
+
+export const SmoothBlocks = Extension.create<object, { stop?: () => void }>({
+  name: "rteSmoothBlocks",
+  addStorage() {
+    return {}
+  },
+  onCreate() {
+    const editor = this.editor
+    const view = editor.view
+    const dom = view.dom as HTMLElement
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)")
+    let last = new Map<HTMLElement, number>()
+    const running = new Set<Animation>()
+
+    const tracked = () => {
+      const out: HTMLElement[] = []
+      for (const child of dom.children)
+        if (child instanceof HTMLElement) out.push(child)
+      dom.querySelectorAll<HTMLElement>("li").forEach((li) => out.push(li))
+      return out
+    }
+    // a block's top against the block holding it (a list item against its
+    // item or block, a block against the page): scrolling and the holder's
+    // own move cancel out, so each moves by its own difference only
+    const measure = () => {
+      const tops = new Map<HTMLElement, number>()
+      const base = dom.getBoundingClientRect().top
+      for (const el of tracked()) {
+        const holder =
+          el.parentElement === dom
+            ? null
+            : (el.parentElement?.closest<HTMLElement>("li") ??
+              [...dom.children].find((c) => c.contains(el)) ??
+              null)
+        const top = el.getBoundingClientRect().top
+        tops.set(
+          el,
+          top - (holder ? holder.getBoundingClientRect().top : base)
+        )
+      }
+      return tops
+    }
+    // the transform a block is drawn with right now, mid-slide
+    const drawnAt = (el: HTMLElement) => {
+      const t = getComputedStyle(el).transform
+      if (!t || t === "none") return 0
+      return new DOMMatrixReadOnly(t).m42
+    }
+    const settled = () => {
+      if (running.size) return
+      last = measure()
+      // the grips placed against the moving blocks find their places again
+      dom.dispatchEvent(new Event(BLOCKS_SETTLED))
+    }
+
+    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (!transaction.docChanged || view.composing) {
+        return
+      }
+      if (reduced.matches || !last.size) {
+        last = measure()
+        return
+      }
+      // a slide still under way goes on from where it is drawn now
+      const from = new Map<HTMLElement, number>()
+      for (const [el, top] of last) from.set(el, top)
+      const drawn = new Map<HTMLElement, number>()
+      for (const a of running) {
+        const el = (a.effect as KeyframeEffect | null)?.target
+        if (el instanceof HTMLElement) drawn.set(el, drawnAt(el))
+      }
+      for (const a of [...running]) a.cancel()
+      running.clear()
+      const now = measure()
+      const fresh = [...now.keys()].filter((el) => !from.has(el))
+      const play = (a: Animation) => {
+        running.add(a)
+        const done = () => {
+          running.delete(a)
+          settled()
+        }
+        a.onfinish = done
+        a.oncancel = () => running.delete(a)
+      }
+      for (const [el, top] of now) {
+        const before = from.get(el)
+        if (before === undefined) continue
+        const dy = before + (drawn.get(el) ?? 0) - top
+        if (Math.abs(dy) < 0.5) continue
+        play(
+          el.animate(
+            [{ transform: `translateY(${dy}px)` }, { transform: "none" }],
+            { duration: SMOOTH_MS, easing: SMOOTH_EASE }
+          )
+        )
+      }
+      if (fresh.length <= SMOOTH_MAX_NEW)
+        for (const el of fresh)
+          play(
+            el.animate([{ opacity: 0 }, { opacity: 1 }], {
+              duration: SMOOTH_MS,
+              easing: "ease-out",
+            })
+          )
+      last = now
+    }
+    // a change of layout no edit made (a picture loading, the window
+    // resized) is taken as the new resting place, not slid to
+    const resize = new ResizeObserver(() => settled())
+    resize.observe(dom)
+    const onResize = () => settled()
+    window.addEventListener("resize", onResize)
+    editor.on("transaction", onTransaction)
+    last = measure()
+    this.storage.stop = () => {
+      editor.off("transaction", onTransaction)
+      window.removeEventListener("resize", onResize)
+      resize.disconnect()
+      for (const a of running) a.cancel()
+    }
+  },
+  onDestroy() {
+    this.storage.stop?.()
+  },
+})
+
+/**
+ * Backspace in an empty list item takes the item away and puts the caret at
+ * the end of the one above, so the list stays one list. Left to the default,
+ * the item is lifted out as a loose line, splitting the list in two around
+ * it (the halves numbered afresh, the line set apart by the lists' margins).
+ * The first item, with nothing above it, keeps the default: it becomes a line.
+ */
+export const ListBackspace = Extension.create({
+  name: "rteListBackspace",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Backspace: ({ editor }) => {
+        const { selection } = editor.state
+        const { $from, empty } = selection
+        if (!empty || $from.parent.content.size > 0 || $from.depth < 3)
+          return false
+        const item = $from.node(-1)
+        if (!["listItem", "taskItem"].includes(item.type.name)) return false
+        if (item.childCount !== 1) return false
+        if ($from.index(-2) === 0) return false
+        const start = $from.before(-1)
+        const tr = editor.state.tr.delete(start, $from.after(-1))
+        const caret = TextSelection.findFrom(tr.doc.resolve(start - 1), -1, true)
+        if (!caret) return false
+        editor.view.dispatch(tr.setSelection(caret).scrollIntoView())
+        return true
+      },
+    }
+  },
+})
+
 export const AtomSelection = Extension.create({
   name: "rteAtomSelection",
   addProseMirrorPlugins() {
