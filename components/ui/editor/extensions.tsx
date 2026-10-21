@@ -15,7 +15,13 @@ import {
   type Editor as TiptapEditor,
 } from "@tiptap/core"
 import type { Node as PMNode } from "@tiptap/pm/model"
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
+import {
+  NodeSelection,
+  Plugin,
+  PluginKey,
+  TextSelection,
+  type Transaction,
+} from "@tiptap/pm/state"
 import { CellSelection } from "@tiptap/pm/tables"
 import {
   Decoration,
@@ -877,6 +883,12 @@ const SMOOTH_MAX_NEW = 3
 
 /** sent on the editor's root when blocks have come to rest after a slide */
 export const BLOCKS_SETTLED = "rte-blocks-settled"
+/**
+ * a change that moves its own blocks, frame by frame (a column bar's drag):
+ * the blocks are measured again but neither slid nor faded, since the row
+ * drawn anew each frame would otherwise fade in each frame
+ */
+export const SMOOTH_SKIP = "rteSmoothSkip"
 
 export const SmoothBlocks = Extension.create<object, { stop?: () => void }>({
   name: "rteSmoothBlocks",
@@ -935,11 +947,15 @@ export const SmoothBlocks = Extension.create<object, { stop?: () => void }>({
       dom.dispatchEvent(new Event(BLOCKS_SETTLED))
     }
 
-    const onTransaction = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+    const onTransaction = ({ transaction }: { transaction: Transaction }) => {
       if (!transaction.docChanged || view.composing) {
         return
       }
-      if (reduced.matches || !last.size) {
+      if (
+        reduced.matches ||
+        !last.size ||
+        transaction.getMeta(SMOOTH_SKIP)
+      ) {
         last = measure()
         return
       }

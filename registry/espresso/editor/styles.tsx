@@ -1243,6 +1243,10 @@ body.rte-tc-dragging .rte-tc-handle {
 .rte-cr.is-dragging .rte-cr-bar {
   background: var(--muted-foreground);
 }
+/* resting on an even split: the bar darkens so the settle is seen */
+.rte-cr.is-snapped .rte-cr-bar {
+  background: var(--foreground);
+}
 body.rte-col-drag {
   cursor: col-resize;
   user-select: none;
