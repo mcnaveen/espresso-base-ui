@@ -63,11 +63,24 @@ export function eachChosen(
 const remove = (view: EditorView, range: BlockRange) => {
   const { state } = view
   const tr = state.tr
-  const $from = state.doc.resolve(range.from)
-  if (range.from === $from.start() && range.to === $from.end())
-    tr.replaceWith(range.from, range.to, state.schema.nodes.paragraph.create())
-  else tr.delete(range.from, range.to)
-  const at = Math.min(range.from, tr.doc.content.size)
+  let { from, to } = range
+  let $from = state.doc.resolve(from)
+  // every item of a list chosen: the list goes, as many levels up as are
+  // left empty by it
+  while (
+    LISTS.has($from.parent.type.name) &&
+    from === $from.start() &&
+    to === $from.end() &&
+    $from.depth > 0
+  ) {
+    from = $from.before()
+    to = $from.after()
+    $from = state.doc.resolve(from)
+  }
+  if (from === $from.start() && to === $from.end())
+    tr.replaceWith(from, to, state.schema.nodes.paragraph.create())
+  else tr.delete(from, to)
+  const at = Math.min(from, tr.doc.content.size)
   tr.setSelection(TextSelection.near(tr.doc.resolve(at), -1))
   tr.setMeta(blockSelectKey, null)
   view.dispatch(tr.scrollIntoView())
@@ -87,6 +100,13 @@ export const BlockSelect = Extension.create({
               | null
               | undefined
             if (meta !== undefined) return meta
+            // a step the editor adds after another (a trailing line set
+            // after the last block) carries the chosen blocks along
+            if (value && tr.getMeta("appendedTransaction")) {
+              const from = tr.mapping.map(value.from, 1)
+              const to = tr.mapping.map(value.to, -1)
+              return from < to ? { from, to } : null
+            }
             // any edit, or the caret moved by a click or a key, lets go
             if (!value || tr.docChanged || tr.selectionSet) return null
             return value
@@ -158,6 +178,9 @@ function carry(view: EditorView, event: ClipboardEvent, cut: boolean) {
   return true
 }
 
+const LISTS = new Set(["bulletList", "orderedList", "taskList"])
+const ITEMS = new Set(["listItem", "taskItem"])
+
 /** how far the pointer goes before a press becomes a box */
 const START = 4
 /** how near the scroller's edge the box starts scrolling it, in px */
@@ -226,21 +249,73 @@ export function BlockMarquee({ editor }: { editor: TiptapEditor }) {
           height,
         }
         setBox(screen)
-        let first: number | null = null
-        let last: number | null = null
-        view.state.doc.forEach((node, offset) => {
-          const el = view.nodeDOM(offset)
-          if (!(el instanceof HTMLElement)) return
+        // the blocks the box touches, as Notion picks them: among the page's
+        // blocks, or — when it touches one block only, and only inside it
+        // (an open toggle's body, clear of its title; one column of a row)
+        // — among that block's own, as deep as that goes
+        const touches = (el: Element) => {
           const r = el.getBoundingClientRect()
-          const hit =
+          return (
             r.right > screen.left &&
             r.left < screen.left + width &&
             r.bottom > screen.top &&
             r.top < screen.top + height
-          if (!hit) return
-          if (first === null) first = offset
-          last = offset + node.nodeSize
-        })
+          )
+        }
+        let holder = view.state.doc
+        let base = 0
+        let hits: { pos: number; size: number }[] = []
+        for (;;) {
+          hits = []
+          holder.forEach((node, offset) => {
+            const pos = base + offset
+            const el = view.nodeDOM(pos)
+            if (el instanceof HTMLElement && touches(el))
+              hits.push({ pos, size: node.nodeSize })
+          })
+          if (hits.length !== 1) break
+          const only = hits[0]
+          const node = view.state.doc.nodeAt(only.pos)
+          const el = view.nodeDOM(only.pos)
+          if (!node || !(el instanceof HTMLElement)) break
+          if (node.type.name === "details" && el.classList.contains("is-open")) {
+            const summary = el.querySelector(":scope > .rte-details-body > summary")
+            if (!summary || touches(summary)) break
+            // into the body: past the toggle's start and its title
+            holder = node.lastChild!
+            base = only.pos + 1 + node.firstChild!.nodeSize + 1
+            continue
+          }
+          // a list's items are blocks of their own: into the list, and
+          // into an item when the box keeps off the item's own first line
+          if (LISTS.has(node.type.name)) {
+            holder = node
+            base = only.pos + 1
+            continue
+          }
+          if (ITEMS.has(node.type.name)) {
+            const line = view.nodeDOM(only.pos + 1)
+            if (!(line instanceof Element) || touches(line)) break
+            holder = node
+            base = only.pos + 1
+            continue
+          }
+          if (node.type.name === "columns" && !node.attrs.media) {
+            const cells = [...el.children].filter(touches)
+            if (cells.length !== 1) break
+            const index = [...el.children].indexOf(cells[0])
+            let cellPos = only.pos + 1
+            for (let i = 0; i < index; i++) cellPos += node.child(i).nodeSize
+            holder = node.child(index)
+            base = cellPos + 1
+            continue
+          }
+          break
+        }
+        const first = hits.length ? hits[0].pos : null
+        const last = hits.length
+          ? hits[hits.length - 1].pos + hits[hits.length - 1].size
+          : null
         const range = first !== null && last !== null ? { from: first, to: last } : null
         const was = blockSelectKey.getState(view.state)
         if (was?.from !== range?.from || was?.to !== range?.to)

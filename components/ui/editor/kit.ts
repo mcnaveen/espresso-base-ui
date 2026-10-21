@@ -50,6 +50,8 @@ import {
   embedFrameAttributes,
   AtomSelection,
   ListBackspace,
+  EdgeKeys,
+  MediaKeys,
   TabKeys,
   TabTrap,
   SmoothBlocks,
@@ -284,6 +286,8 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
       CommentMark,
       AtomSelection,
       ListBackspace,
+      EdgeKeys,
+      MediaKeys,
       SmoothBlocks,
       BlockSelect
     )

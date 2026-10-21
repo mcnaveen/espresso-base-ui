@@ -14,7 +14,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import type { Editor as TiptapEditor } from "@tiptap/core"
-import type { Node as PMNode } from "@tiptap/pm/model"
+import { Fragment, type Node as PMNode } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 
 import { cn } from "@/lib/utils"
@@ -45,6 +45,8 @@ const SKIP =
   ".ProseMirror-gapcursor, .ProseMirror-widget, .ProseMirror-separator, br"
 const ROW = '[data-type="columns"]'
 const TOGGLE = '[data-type="details"]'
+const LIST_TYPES = new Set(["bulletList", "orderedList", "taskList"])
+const ITEM_TYPES = new Set(["listItem", "taskItem"])
 const MEDIA_ROW = '[data-type="columns"][data-media="true"]'
 /** a text column's grip: smaller, centred in the half-gutter between the
  * hairline and the text (styles.tsx: a 56px gutter, the line mid-way) */
@@ -452,6 +454,41 @@ function dropBeside(
   return tr
 }
 
+/**
+ * A run of blocks fitted for where it lands. A list's items keep their
+ * kind: where no list stands they go in a list of their own, into another
+ * kind of list they take its items' kind. All of their list, they take
+ * the list along. `into` is the node the run is set in (none: a new cell).
+ */
+function fitRun(
+  state: View["state"],
+  from: number,
+  to: number,
+  into: PMNode | null
+) {
+  const $from = state.doc.resolve(from)
+  const list = $from.parent
+  let content = state.doc.slice(from, to).content
+  let wrapped = false
+  let leave = { from, to }
+  if (LIST_TYPES.has(list.type.name)) {
+    if (!into || !LIST_TYPES.has(into.type.name)) {
+      content = Fragment.from(list.type.create(list.attrs, content))
+      wrapped = true
+    } else if (into.type !== list.type) {
+      const item = into.type.contentMatch.defaultType
+      if (item) {
+        const items: PMNode[] = []
+        content.forEach((n) => items.push(item.create(null, n.content)))
+        content = Fragment.from(items)
+      }
+    }
+    if (from === $from.start() && to === $from.end())
+      leave = { from: $from.before(), to: $from.after() }
+  }
+  return { content, wrapped, leave }
+}
+
 /** the cell a run from `from` to `to` is the whole of, in a row of prose:
  * carried off, it takes its cell along */
 function wholeCell(state: View["state"], from: number, to: number) {
@@ -480,7 +517,8 @@ function dropRunBeside(
   const column = schema.nodes.column
   const beside = state.doc.nodeAt(at)
   if (!columns || !column || !beside) return null
-  const content = state.doc.slice(from, to).content
+  const fit = fitRun(state, from, to, null)
+  const { content } = fit
   const tr = state.tr
   const $at = state.doc.resolve(at)
   let start: number
@@ -504,10 +542,18 @@ function dropRunBeside(
     start = side === "left" ? at + 2 : at + 2 + theirs.nodeSize
   }
   const placed = tr.steps.length
-  const landed = { from: start, to: start + content.size }
+  // the items themselves, inside the list made for them
+  const inset = fit.wrapped ? 1 : 0
+  const landed = { from: start + inset, to: start + content.size - inset }
 
   // the run leaves where it was
-  leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+  const { leave } = fit
+  leaveBehind(
+    tr,
+    leave.from,
+    leave.to - leave.from,
+    wholeCell(state, leave.from, leave.to)
+  )
   const after = tr.mapping.slice(placed)
   return {
     tr,
@@ -632,8 +678,15 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const first = el.matches(FIRST_LINE)
       ? el
       : (el.querySelector(FIRST_LINE) ?? el)
-    const fr = first.getBoundingClientRect()
-    const lineHeight = parseFloat(getComputedStyle(first).lineHeight) || SIZE
+    const box = first.getBoundingClientRect()
+    const fcs = getComputedStyle(first)
+    // the first line starts inside the block's padding (a code block's)
+    const inset =
+      first === el && el.matches("pre")
+        ? parseFloat(fcs.paddingTop) + parseFloat(fcs.borderTopWidth)
+        : 0
+    const fr = { top: box.top + inset, height: box.height - inset }
+    const lineHeight = parseFloat(fcs.lineHeight) || SIZE
     const line = Math.min(lineHeight, fr.height)
     // a short block with no line of text (an Add Image slot, a divider)
     // has its grip centred on it, as a single line's is
@@ -700,6 +753,9 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       setTarget(el)
       place()
     }
+    const onFrame = (event: MouseEvent) => {
+      if (event.target instanceof HTMLIFrameElement) onMove(event)
+    }
     const settle = () => place()
     const hide = () => {
       if (drag.current.dragging || drag.current.pressed) return
@@ -710,6 +766,9 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const root = editor.view.dom
     root.addEventListener(BLOCKS_SETTLED, settle)
     document.addEventListener("mousemove", onMove, true)
+    // the pointer gone onto an embedded page (a video, an embed) sends no
+    // move here: its frame's mouseover still says which block it is on
+    document.addEventListener("mouseover", onFrame, true)
     document.addEventListener("scroll", settle, true)
     document.addEventListener("mouseleave", hide)
     window.addEventListener("resize", settle)
@@ -717,6 +776,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       editor.off("transaction", settle)
       root.removeEventListener(BLOCKS_SETTLED, settle)
       document.removeEventListener("mousemove", onMove, true)
+      document.removeEventListener("mouseover", onFrame, true)
       document.removeEventListener("scroll", settle, true)
       document.removeEventListener("mouseleave", hide)
       window.removeEventListener("resize", settle)
@@ -921,18 +981,30 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       chosen: boolean,
       spot: { lone: number | null; open: number | null }
     ) => {
-      if (edge >= from && edge <= to) return
       const { state } = editor.view
+      const fit = fitRun(state, from, to, state.doc.resolve(edge).parent)
+      const { leave } = fit
+      if (edge >= leave.from && edge <= leave.to) return
       const tr = state.tr
       settleToggle(tr, spot, "before")
-      tr.insert(edge, state.doc.slice(from, to).content)
+      tr.insert(edge, fit.content)
       const placed = tr.steps.length
       const start = tr.mapping.map(edge, -1)
       const end = tr.mapping.map(edge, 1)
-      leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+      leaveBehind(
+        tr,
+        leave.from,
+        leave.to - leave.from,
+        wholeCell(state, leave.from, leave.to)
+      )
       settleToggle(tr, spot, "after")
       const after = tr.mapping.slice(placed)
-      const landed = { from: after.map(start, 1), to: after.map(end, -1) }
+      // the items themselves, inside the list made for them
+      const inset = fit.wrapped ? 1 : 0
+      const landed = {
+        from: after.map(start, 1) + inset,
+        to: after.map(end, -1) - inset,
+      }
       if (chosen) {
         tr.setSelection(TextSelection.near(tr.doc.resolve(landed.from)))
         tr.setMeta(blockSelectKey, landed)
@@ -1110,14 +1182,32 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const { edge } = spot
     // the block is already there
     if (edge === from.pos || edge === from.pos + node.nodeSize) return
+    // a list's item keeps its kind: set down away from a list it goes in a
+    // list of its own, and into another kind of list it takes that kind's
+    // item; the only item of its list takes the list along
+    let moving = node
+    let source = { pos: from.pos, size: node.nodeSize }
+    const $src = state.doc.resolve(from.pos)
+    if (ITEM_TYPES.has(node.type.name)) {
+      const list = $src.parent
+      const $edge = state.doc.resolve(edge)
+      if (!LIST_TYPES.has($edge.parent.type.name))
+        moving = list.type.create(list.attrs, node)
+      else if ($edge.parent.type !== list.type) {
+        const item = $edge.parent.type.contentMatch.defaultType
+        if (item) moving = item.create(null, node.content)
+      }
+      if (list.childCount === 1)
+        source = { pos: $src.before(), size: list.nodeSize }
+    }
     // placed first, then taken from where it was: the insert only ever
     // adds, so the source's position still maps
     const tr = state.tr
-    const cell = emptiedCell(state, from.pos)
+    const cell = emptiedCell(state, source.pos)
     settleToggle(tr, spot, "before")
-    tr.insert(edge, node)
+    tr.insert(edge, moving)
     const placed = tr.steps.length
-    leaveBehind(tr, from.pos, node.nodeSize, cell)
+    leaveBehind(tr, source.pos, source.size, cell)
     settleToggle(tr, spot, "after")
     const to = tr.mapping.slice(placed).map(edge, at.before ? -1 : 1)
     // the block, wherever the fit put it, stays selected
@@ -1126,7 +1216,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       Math.max(0, to - 2),
       Math.min(tr.doc.content.size, to + node.nodeSize + 2),
       (n, pos) => {
-        if (moved === null && n.type === node.type && n.eq(node)) moved = pos
+        if (moved === null && n.type === moving.type && n.eq(moving)) moved = pos
         return moved === null
       }
     )

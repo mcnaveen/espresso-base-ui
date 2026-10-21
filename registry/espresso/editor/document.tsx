@@ -1476,8 +1476,12 @@ const docClassName = cn(
   "[&_.ProseMirror_h4]:mt-6 [&_.ProseMirror_h4]:mb-2 [&_.ProseMirror_h4]:text-lg [&_.ProseMirror_h4]:leading-[1.35] [&_.ProseMirror_h4]:font-semibold [&_.ProseMirror_h4]:text-foreground",
   "[&_.ProseMirror_h5]:mt-6 [&_.ProseMirror_h5]:mb-2 [&_.ProseMirror_h5]:text-base [&_.ProseMirror_h5]:leading-[1.4] [&_.ProseMirror_h5]:font-semibold [&_.ProseMirror_h5]:text-foreground",
   "[&_.ProseMirror_h6]:mt-6 [&_.ProseMirror_h6]:mb-2 [&_.ProseMirror_h6]:text-[15px] [&_.ProseMirror_h6]:leading-[1.4] [&_.ProseMirror_h6]:font-semibold [&_.ProseMirror_h6]:text-foreground",
-  // blocks
+  // blocks; a numbered list nested in another counts on in letters, then
+  // in roman numerals, then in numbers again, and a bulleted one goes from
+  // dot to circle to square and round again, as Notion's do
   "[&_.ProseMirror_ul:not([data-type=taskList])]:list-disc [&_.ProseMirror_ul]:my-1 [&_.ProseMirror_ul:not([data-type=taskList])]:pl-6 [&_.ProseMirror_ol]:my-1 [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_ol]:pl-6",
+  "[&_.ProseMirror_ol_ol]:list-[lower-alpha] [&_.ProseMirror_ol_ol_ol]:list-[lower-roman] [&_.ProseMirror_ol_ol_ol_ol]:list-decimal [&_.ProseMirror_ol_ol_ol_ol_ol]:list-[lower-alpha] [&_.ProseMirror_ol_ol_ol_ol_ol_ol]:list-[lower-roman]",
+  "[&_.ProseMirror_ul:not([data-type=taskList])_ul:not([data-type=taskList])]:list-[circle] [&_.ProseMirror_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])]:list-[square] [&_.ProseMirror_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])]:list-disc [&_.ProseMirror_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])]:list-[circle] [&_.ProseMirror_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])_ul:not([data-type=taskList])]:list-[square]",
   "[&_.ProseMirror_blockquote]:my-2 [&_.ProseMirror_blockquote]:border-l-2 [&_.ProseMirror_blockquote]:border-border [&_.ProseMirror_blockquote]:pl-3 [&_.ProseMirror_blockquote]:text-muted-foreground",
   "[&_.ProseMirror_pre]:my-2 [&_.ProseMirror_pre]:rounded-lg [&_.ProseMirror_pre]:bg-input [&_.ProseMirror_pre]:p-3 [&_.ProseMirror_pre]:font-mono [&_.ProseMirror_pre]:text-sm [&_.ProseMirror_pre]:whitespace-pre-wrap [&_.ProseMirror_pre]:text-secondary-foreground",
   "[&_.ProseMirror_code:not(pre_code)]:rounded-sm [&_.ProseMirror_code:not(pre_code)]:bg-secondary [&_.ProseMirror_code:not(pre_code)]:px-1 [&_.ProseMirror_code:not(pre_code)]:py-0.5 [&_.ProseMirror_code:not(pre_code)]:font-mono [&_.ProseMirror_code:not(pre_code)]:text-[0.9em]",

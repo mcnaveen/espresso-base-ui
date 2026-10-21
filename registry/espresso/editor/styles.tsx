@@ -242,7 +242,9 @@ const CSS = `
 .rte-details-toggle:hover {
   background: var(--secondary);
 }
-.rte-details.is-open .rte-details-toggle {
+/* a toggle's own chevron and body only: a toggle closed inside an open one
+   stays closed */
+.rte-details.is-open > .rte-details-toggle {
   transform: rotate(90deg);
 }
 .rte-details.ProseMirror-selectednode {
@@ -298,7 +300,7 @@ const CSS = `
 .rte-details.is-open > .rte-details-body {
   grid-template-rows: auto 1fr;
 }
-.rte-details [data-type='details-content'] {
+.rte-details > .rte-details-body > [data-type='details-content'] {
   min-height: 0;
   overflow: hidden;
   /* room inside the clip for what draws past a block's edge (a chosen
@@ -313,7 +315,7 @@ const CSS = `
     opacity 160ms ease-out,
     visibility 0s linear 220ms;
 }
-.rte-details.is-open [data-type='details-content'] {
+.rte-details.is-open > .rte-details-body > [data-type='details-content'] {
   padding-top: 12px;
   opacity: 1;
   visibility: visible;
@@ -324,7 +326,7 @@ const CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   .rte-details-body,
-  .rte-details [data-type='details-content'] {
+  .rte-details > .rte-details-body > [data-type='details-content'] {
     transition: none;
   }
 }
@@ -626,11 +628,11 @@ ${cellTintRules}
    the column's top with its neighbours (a slot, a line of text), the last
    one ends it, as any first and last block in a column does */
 .rte-doc [data-type='column'] > :first-child:is(.rte-figure, .rte-media, img),
-.rte-doc [data-type='column'] > :first-child > :is(.rte-figure, .rte-media) {
+.rte-doc [data-type='column'] > :first-child > :is(.rte-figure, .rte-media, .rte-player) {
   margin-top: 0;
 }
 .rte-doc [data-type='column'] > :last-child:is(.rte-figure, .rte-media, img),
-.rte-doc [data-type='column'] > :last-child > :is(.rte-figure, .rte-media) {
+.rte-doc [data-type='column'] > :last-child > :is(.rte-figure, .rte-media, .rte-player) {
   margin-bottom: 0;
 }
 /* a cell's picture fills its cell until it is resized; a resized one
@@ -1278,6 +1280,13 @@ body.rte-marquee {
   user-select: none;
   cursor: default;
 }
+/* while a box, a column bar or a block is dragged, an embedded page (a
+   video, an embed) takes no pointer: the moves stay with the editor */
+body.rte-marquee iframe,
+body.rte-col-drag iframe,
+body.rte-block-drag iframe {
+  pointer-events: none;
+}
 body.rte-marquee .rte-bh-handle,
 body.rte-marquee .rte-cr {
   display: none;
@@ -1286,6 +1295,14 @@ body.rte-marquee .rte-cr {
   border-radius: 4px;
   box-shadow:
     -3px 0 0 0 var(--rte-chosen),
+    3px 0 0 0 var(--rte-chosen),
+    inset 0 0 0 9999px var(--rte-chosen);
+}
+/* a chosen list item takes its marker in: the tint reaches back over the
+   list's 24px of room for its bullet, number or box */
+.ProseMirror li.rte-block-chosen {
+  box-shadow:
+    -24px 0 0 0 var(--rte-chosen),
     3px 0 0 0 var(--rte-chosen),
     inset 0 0 0 9999px var(--rte-chosen);
 }

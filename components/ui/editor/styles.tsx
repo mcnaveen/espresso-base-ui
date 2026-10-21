@@ -242,7 +242,9 @@ const CSS = `
 .rte-details-toggle:hover {
   background: var(--secondary);
 }
-.rte-details.is-open .rte-details-toggle {
+/* a toggle's own chevron and body only: a toggle closed inside an open one
+   stays closed */
+.rte-details.is-open > .rte-details-toggle {
   transform: rotate(90deg);
 }
 .rte-details.ProseMirror-selectednode {
@@ -298,7 +300,7 @@ const CSS = `
 .rte-details.is-open > .rte-details-body {
   grid-template-rows: auto 1fr;
 }
-.rte-details [data-type='details-content'] {
+.rte-details > .rte-details-body > [data-type='details-content'] {
   min-height: 0;
   overflow: hidden;
   /* room inside the clip for what draws past a block's edge (a chosen
@@ -313,7 +315,7 @@ const CSS = `
     opacity 160ms ease-out,
     visibility 0s linear 220ms;
 }
-.rte-details.is-open [data-type='details-content'] {
+.rte-details.is-open > .rte-details-body > [data-type='details-content'] {
   padding-top: 12px;
   opacity: 1;
   visibility: visible;
@@ -324,7 +326,7 @@ const CSS = `
 }
 @media (prefers-reduced-motion: reduce) {
   .rte-details-body,
-  .rte-details [data-type='details-content'] {
+  .rte-details > .rte-details-body > [data-type='details-content'] {
     transition: none;
   }
 }
@@ -1293,6 +1295,14 @@ body.rte-marquee .rte-cr {
   border-radius: 4px;
   box-shadow:
     -3px 0 0 0 var(--rte-chosen),
+    3px 0 0 0 var(--rte-chosen),
+    inset 0 0 0 9999px var(--rte-chosen);
+}
+/* a chosen list item takes its marker in: the tint reaches back over the
+   list's 24px of room for its bullet, number or box */
+.ProseMirror li.rte-block-chosen {
+  box-shadow:
+    -24px 0 0 0 var(--rte-chosen),
     3px 0 0 0 var(--rte-chosen),
     inset 0 0 0 9999px var(--rte-chosen);
 }

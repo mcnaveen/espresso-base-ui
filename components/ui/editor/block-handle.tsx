@@ -14,7 +14,7 @@
 import * as React from "react"
 import { createPortal } from "react-dom"
 import type { Editor as TiptapEditor } from "@tiptap/core"
-import type { Node as PMNode } from "@tiptap/pm/model"
+import { Fragment, type Node as PMNode } from "@tiptap/pm/model"
 import { NodeSelection, TextSelection } from "@tiptap/pm/state"
 
 import { cn } from "@/lib/utils"
@@ -454,6 +454,41 @@ function dropBeside(
   return tr
 }
 
+/**
+ * A run of blocks fitted for where it lands. A list's items keep their
+ * kind: where no list stands they go in a list of their own, into another
+ * kind of list they take its items' kind. All of their list, they take
+ * the list along. `into` is the node the run is set in (none: a new cell).
+ */
+function fitRun(
+  state: View["state"],
+  from: number,
+  to: number,
+  into: PMNode | null
+) {
+  const $from = state.doc.resolve(from)
+  const list = $from.parent
+  let content = state.doc.slice(from, to).content
+  let wrapped = false
+  let leave = { from, to }
+  if (LIST_TYPES.has(list.type.name)) {
+    if (!into || !LIST_TYPES.has(into.type.name)) {
+      content = Fragment.from(list.type.create(list.attrs, content))
+      wrapped = true
+    } else if (into.type !== list.type) {
+      const item = into.type.contentMatch.defaultType
+      if (item) {
+        const items: PMNode[] = []
+        content.forEach((n) => items.push(item.create(null, n.content)))
+        content = Fragment.from(items)
+      }
+    }
+    if (from === $from.start() && to === $from.end())
+      leave = { from: $from.before(), to: $from.after() }
+  }
+  return { content, wrapped, leave }
+}
+
 /** the cell a run from `from` to `to` is the whole of, in a row of prose:
  * carried off, it takes its cell along */
 function wholeCell(state: View["state"], from: number, to: number) {
@@ -482,7 +517,8 @@ function dropRunBeside(
   const column = schema.nodes.column
   const beside = state.doc.nodeAt(at)
   if (!columns || !column || !beside) return null
-  const content = state.doc.slice(from, to).content
+  const fit = fitRun(state, from, to, null)
+  const { content } = fit
   const tr = state.tr
   const $at = state.doc.resolve(at)
   let start: number
@@ -506,10 +542,18 @@ function dropRunBeside(
     start = side === "left" ? at + 2 : at + 2 + theirs.nodeSize
   }
   const placed = tr.steps.length
-  const landed = { from: start, to: start + content.size }
+  // the items themselves, inside the list made for them
+  const inset = fit.wrapped ? 1 : 0
+  const landed = { from: start + inset, to: start + content.size - inset }
 
   // the run leaves where it was
-  leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+  const { leave } = fit
+  leaveBehind(
+    tr,
+    leave.from,
+    leave.to - leave.from,
+    wholeCell(state, leave.from, leave.to)
+  )
   const after = tr.mapping.slice(placed)
   return {
     tr,
@@ -937,18 +981,30 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       chosen: boolean,
       spot: { lone: number | null; open: number | null }
     ) => {
-      if (edge >= from && edge <= to) return
       const { state } = editor.view
+      const fit = fitRun(state, from, to, state.doc.resolve(edge).parent)
+      const { leave } = fit
+      if (edge >= leave.from && edge <= leave.to) return
       const tr = state.tr
       settleToggle(tr, spot, "before")
-      tr.insert(edge, state.doc.slice(from, to).content)
+      tr.insert(edge, fit.content)
       const placed = tr.steps.length
       const start = tr.mapping.map(edge, -1)
       const end = tr.mapping.map(edge, 1)
-      leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+      leaveBehind(
+        tr,
+        leave.from,
+        leave.to - leave.from,
+        wholeCell(state, leave.from, leave.to)
+      )
       settleToggle(tr, spot, "after")
       const after = tr.mapping.slice(placed)
-      const landed = { from: after.map(start, 1), to: after.map(end, -1) }
+      // the items themselves, inside the list made for them
+      const inset = fit.wrapped ? 1 : 0
+      const landed = {
+        from: after.map(start, 1) + inset,
+        to: after.map(end, -1) - inset,
+      }
       if (chosen) {
         tr.setSelection(TextSelection.near(tr.doc.resolve(landed.from)))
         tr.setMeta(blockSelectKey, landed)
