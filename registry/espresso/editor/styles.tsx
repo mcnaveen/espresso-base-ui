@@ -619,6 +619,17 @@ ${cellTintRules}
 .rte-doc .rte-media img {
   margin: 0;
 }
+/* in a column a picture is the cell's own block: the first one stands at
+   the column's top with its neighbours (a slot, a line of text), the last
+   one ends it, as any first and last block in a column does */
+.rte-doc [data-type='column'] > :first-child:is(.rte-figure, .rte-media, img),
+.rte-doc [data-type='column'] > :first-child > :is(.rte-figure, .rte-media) {
+  margin-top: 0;
+}
+.rte-doc [data-type='column'] > :last-child:is(.rte-figure, .rte-media, img),
+.rte-doc [data-type='column'] > :last-child > :is(.rte-figure, .rte-media) {
+  margin-bottom: 0;
+}
 /* a cell's picture fills its cell until it is resized; a resized one
    keeps its width (never wider than the cell) and the ring hugs it */
 .rte-doc [data-type='columns'][data-media='true'] .rte-media {

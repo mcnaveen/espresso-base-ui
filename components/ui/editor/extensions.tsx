@@ -904,13 +904,16 @@ export const SmoothBlocks = Extension.create<object, { stop?: () => void }>({
     const measure = () => {
       const tops = new Map<HTMLElement, number>()
       const base = dom.getBoundingClientRect().top
+      const topBlock = (el: HTMLElement) => {
+        let at = el
+        while (at.parentElement && at.parentElement !== dom) at = at.parentElement
+        return at
+      }
       for (const el of tracked()) {
         const holder =
           el.parentElement === dom
             ? null
-            : (el.parentElement?.closest<HTMLElement>("li") ??
-              [...dom.children].find((c) => c.contains(el)) ??
-              null)
+            : (el.parentElement?.closest<HTMLElement>("li") ?? topBlock(el))
         const top = el.getBoundingClientRect().top
         tops.set(
           el,
