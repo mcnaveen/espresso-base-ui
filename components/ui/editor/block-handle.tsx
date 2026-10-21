@@ -45,6 +45,8 @@ const SKIP =
   ".ProseMirror-gapcursor, .ProseMirror-widget, .ProseMirror-separator, br"
 const ROW = '[data-type="columns"]'
 const TOGGLE = '[data-type="details"]'
+const LIST_TYPES = new Set(["bulletList", "orderedList", "taskList"])
+const ITEM_TYPES = new Set(["listItem", "taskItem"])
 const MEDIA_ROW = '[data-type="columns"][data-media="true"]'
 /** a text column's grip: smaller, centred in the half-gutter between the
  * hairline and the text (styles.tsx: a 56px gutter, the line mid-way) */
@@ -632,8 +634,15 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const first = el.matches(FIRST_LINE)
       ? el
       : (el.querySelector(FIRST_LINE) ?? el)
-    const fr = first.getBoundingClientRect()
-    const lineHeight = parseFloat(getComputedStyle(first).lineHeight) || SIZE
+    const box = first.getBoundingClientRect()
+    const fcs = getComputedStyle(first)
+    // the first line starts inside the block's padding (a code block's)
+    const inset =
+      first === el && el.matches("pre")
+        ? parseFloat(fcs.paddingTop) + parseFloat(fcs.borderTopWidth)
+        : 0
+    const fr = { top: box.top + inset, height: box.height - inset }
+    const lineHeight = parseFloat(fcs.lineHeight) || SIZE
     const line = Math.min(lineHeight, fr.height)
     // a short block with no line of text (an Add Image slot, a divider)
     // has its grip centred on it, as a single line's is
@@ -700,6 +709,9 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       setTarget(el)
       place()
     }
+    const onFrame = (event: MouseEvent) => {
+      if (event.target instanceof HTMLIFrameElement) onMove(event)
+    }
     const settle = () => place()
     const hide = () => {
       if (drag.current.dragging || drag.current.pressed) return
@@ -710,6 +722,9 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const root = editor.view.dom
     root.addEventListener(BLOCKS_SETTLED, settle)
     document.addEventListener("mousemove", onMove, true)
+    // the pointer gone onto an embedded page (a video, an embed) sends no
+    // move here: its frame's mouseover still says which block it is on
+    document.addEventListener("mouseover", onFrame, true)
     document.addEventListener("scroll", settle, true)
     document.addEventListener("mouseleave", hide)
     window.addEventListener("resize", settle)
@@ -717,6 +732,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       editor.off("transaction", settle)
       root.removeEventListener(BLOCKS_SETTLED, settle)
       document.removeEventListener("mousemove", onMove, true)
+      document.removeEventListener("mouseover", onFrame, true)
       document.removeEventListener("scroll", settle, true)
       document.removeEventListener("mouseleave", hide)
       window.removeEventListener("resize", settle)
@@ -1110,14 +1126,32 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const { edge } = spot
     // the block is already there
     if (edge === from.pos || edge === from.pos + node.nodeSize) return
+    // a list's item keeps its kind: set down away from a list it goes in a
+    // list of its own, and into another kind of list it takes that kind's
+    // item; the only item of its list takes the list along
+    let moving = node
+    let source = { pos: from.pos, size: node.nodeSize }
+    const $src = state.doc.resolve(from.pos)
+    if (ITEM_TYPES.has(node.type.name)) {
+      const list = $src.parent
+      const $edge = state.doc.resolve(edge)
+      if (!LIST_TYPES.has($edge.parent.type.name))
+        moving = list.type.create(list.attrs, node)
+      else if ($edge.parent.type !== list.type) {
+        const item = $edge.parent.type.contentMatch.defaultType
+        if (item) moving = item.create(null, node.content)
+      }
+      if (list.childCount === 1)
+        source = { pos: $src.before(), size: list.nodeSize }
+    }
     // placed first, then taken from where it was: the insert only ever
     // adds, so the source's position still maps
     const tr = state.tr
-    const cell = emptiedCell(state, from.pos)
+    const cell = emptiedCell(state, source.pos)
     settleToggle(tr, spot, "before")
-    tr.insert(edge, node)
+    tr.insert(edge, moving)
     const placed = tr.steps.length
-    leaveBehind(tr, from.pos, node.nodeSize, cell)
+    leaveBehind(tr, source.pos, source.size, cell)
     settleToggle(tr, spot, "after")
     const to = tr.mapping.slice(placed).map(edge, at.before ? -1 : 1)
     // the block, wherever the fit put it, stays selected
@@ -1126,7 +1160,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       Math.max(0, to - 2),
       Math.min(tr.doc.content.size, to + node.nodeSize + 2),
       (n, pos) => {
-        if (moved === null && n.type === node.type && n.eq(node)) moved = pos
+        if (moved === null && n.type === moving.type && n.eq(moving)) moved = pos
         return moved === null
       }
     )

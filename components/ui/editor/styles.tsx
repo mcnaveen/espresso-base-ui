@@ -626,11 +626,11 @@ ${cellTintRules}
    the column's top with its neighbours (a slot, a line of text), the last
    one ends it, as any first and last block in a column does */
 .rte-doc [data-type='column'] > :first-child:is(.rte-figure, .rte-media, img),
-.rte-doc [data-type='column'] > :first-child > :is(.rte-figure, .rte-media) {
+.rte-doc [data-type='column'] > :first-child > :is(.rte-figure, .rte-media, .rte-player) {
   margin-top: 0;
 }
 .rte-doc [data-type='column'] > :last-child:is(.rte-figure, .rte-media, img),
-.rte-doc [data-type='column'] > :last-child > :is(.rte-figure, .rte-media) {
+.rte-doc [data-type='column'] > :last-child > :is(.rte-figure, .rte-media, .rte-player) {
   margin-bottom: 0;
 }
 /* a cell's picture fills its cell until it is resized; a resized one
@@ -1277,6 +1277,13 @@ body.rte-col-drag {
 body.rte-marquee {
   user-select: none;
   cursor: default;
+}
+/* while a box, a column bar or a block is dragged, an embedded page (a
+   video, an embed) takes no pointer: the moves stay with the editor */
+body.rte-marquee iframe,
+body.rte-col-drag iframe,
+body.rte-block-drag iframe {
+  pointer-events: none;
 }
 body.rte-marquee .rte-bh-handle,
 body.rte-marquee .rte-cr {
