@@ -118,6 +118,8 @@ export const BlockSelect = Extension.create({
               remove(view, range)
               return true
             }
+            // Tab stays on the page, the blocks still chosen
+            if (event.key === "Tab") return true
             if (event.key === "Escape") {
               choose(view, null)
               return true

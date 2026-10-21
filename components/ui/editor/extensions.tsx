@@ -14,7 +14,7 @@ import {
   type ChainedCommands,
   type Editor as TiptapEditor,
 } from "@tiptap/core"
-import type { Node as PMNode } from "@tiptap/pm/model"
+import { Fragment, type Node as PMNode } from "@tiptap/pm/model"
 import {
   NodeSelection,
   Plugin,
@@ -43,6 +43,7 @@ import {
   openImageSourcePopup,
   openRemoveEmbedModal,
 } from "./media"
+import { chosenBlocks } from "./block-select"
 
 import { cn } from "@/lib/utils"
 import {
@@ -1030,6 +1031,201 @@ export const SmoothBlocks = Extension.create<object, { stop?: () => void }>({
  * it (the halves numbered afresh, the line set apart by the lists' margins).
  * The first item, with nothing above it, keeps the default: it becomes a line.
  */
+/* ------------------------------------ tab ----------------------------------
+ * Tab as Notion has it: it never leaves the page. On a list item it nests
+ * the item under the one above, Shift+Tab lifts it back — but never out
+ * of its list, which a top-level item stays in. A block just after a list
+ * or a toggle goes into it (the list's last item, the toggle's body, opened
+ * to show it), and Shift+Tab sets a list item's or a toggle's own blocks
+ * back out after it, those after them coming along so the order holds.
+ * In code Tab indents the caret's lines two spaces and Shift+Tab takes
+ * them back; a table's cells are stepped through by the table's own keys.
+ */
+const LISTS = new Set(["bulletList", "orderedList", "taskList"])
+const ITEMS = new Set(["listItem", "taskItem"])
+const INDENT = "  "
+
+type TabState = TiptapEditor["state"]
+
+/** the caret's lines in a code block, as offsets in its text */
+function codeLines(state: TabState) {
+  const { $from, $to } = state.selection
+  const text = $from.parent.textContent
+  const starts: number[] = []
+  let at = text.lastIndexOf("\n", $from.parentOffset - 1) + 1
+  starts.push(at)
+  const end = $to.sameParent($from) ? $to.parentOffset : $from.parentOffset
+  for (;;) {
+    const next = text.indexOf("\n", at)
+    if (next < 0 || next >= end) break
+    at = next + 1
+    starts.push(at)
+  }
+  return { text, starts, base: $from.start() }
+}
+
+function indentCode(editor: TiptapEditor, out: boolean) {
+  const { state } = editor
+  const { empty } = state.selection
+  const { text, starts, base } = codeLines(state)
+  const tr = state.tr
+  if (!out && empty) {
+    tr.insertText(INDENT)
+  } else {
+    // the last line first, so the earlier offsets still hold
+    for (const start of [...starts].reverse()) {
+      if (!out) tr.insertText(INDENT, base + start)
+      else {
+        const lead = /^( {1,2}|\t)/.exec(text.slice(start))
+        if (lead) tr.delete(base + start, base + start + lead[0].length)
+      }
+    }
+  }
+  if (!tr.docChanged) return true
+  editor.view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+/** the caret's block set into the list or toggle just before it */
+function nestInto(editor: TiptapEditor) {
+  const { state } = editor
+  const { $from } = state.selection
+  const depth = $from.depth
+  if (depth < 1) return false
+  const index = $from.index(depth - 1)
+  if (index === 0) return false
+  const container = $from.node(depth - 1)
+  const prev = container.child(index - 1)
+  const blockPos = $from.before(depth)
+  const block = $from.parent
+  const prevPos = blockPos - prev.nodeSize
+  let holder: PMNode
+  let at: number
+  if (LISTS.has(prev.type.name)) {
+    holder = prev.lastChild!
+    at = prevPos + prev.nodeSize - 2
+  } else if (prev.type.name === "details" && prev.lastChild) {
+    holder = prev.lastChild
+    at = prevPos + prev.nodeSize - 2
+  } else return false
+  if (!holder.canReplace(holder.childCount, holder.childCount, Fragment.from(block)))
+    return false
+  const tr = state.tr
+  tr.delete(blockPos, blockPos + block.nodeSize)
+  tr.insert(at, block)
+  if (prev.type.name === "details" && prev.attrs.open === false)
+    tr.setNodeMarkup(prevPos, undefined, { ...prev.attrs, open: true })
+  tr.setSelection(TextSelection.near(tr.doc.resolve(at + ($from.pos - blockPos))))
+  editor.view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+/** the caret's block, and the blocks after it in the same holder, set back
+ * out after the list item or toggle holding them */
+function liftOut(editor: TiptapEditor) {
+  const { state } = editor
+  const { $from } = state.selection
+  const depth = $from.depth
+  if (depth < 3) return false
+  const holder = $from.node(depth - 1)
+  const index = $from.index(depth - 1)
+  const name = holder.type.name
+  const inItem = ITEMS.has(name) && index > 0
+  const inToggle = name === "detailsContent"
+  if (!inItem && !inToggle) return false
+  const from = $from.before(depth)
+  const to = $from.end(depth - 1)
+  const content = state.doc.slice(from, to).content
+  const tr = state.tr
+  let at: number
+  if (inToggle) {
+    // past the toggle
+    at = $from.after(depth - 2)
+    tr.insert(at, content)
+  } else {
+    // past the item: the rest of its list goes on after the blocks
+    const itemEnd = $from.after(depth - 1)
+    const list = $from.node(depth - 2)
+    const last = $from.index(depth - 2) === list.childCount - 1
+    if (last) at = $from.after(depth - 2)
+    else {
+      tr.split(itemEnd, 1)
+      at = itemEnd + 1
+    }
+    tr.insert(at, content)
+  }
+  const placed = tr.steps.length
+  // a toggle's body holds a block at least: emptied, an empty line stays
+  if (inToggle && index === 0)
+    tr.replaceWith(from, to, state.schema.nodes.paragraph.create())
+  else tr.delete(from, to)
+  const start = tr.mapping.slice(placed).map(at, 1)
+  tr.setSelection(TextSelection.near(tr.doc.resolve(start + ($from.pos - from))))
+  editor.view.dispatch(tr.scrollIntoView())
+  return true
+}
+
+/** where the caret stands: in code, a table, a list item's first line */
+function tabPlace(state: TabState) {
+  const { $from } = state.selection
+  let table = false
+  for (let d = $from.depth; d > 0; d--)
+    if ($from.node(d).type.spec.tableRole === "cell") table = true
+  const holder = $from.depth > 0 ? $from.node($from.depth - 1) : null
+  const itemHead =
+    !!holder && ITEMS.has(holder.type.name) && $from.index($from.depth - 1) === 0
+  // the item's list stands in another item: it can be lifted
+  const nested =
+    itemHead && $from.depth >= 4 && ITEMS.has($from.node($from.depth - 3).type.name)
+  return {
+    code: $from.parent.type.spec.code === true,
+    table,
+    itemHead,
+    nested,
+    summary: $from.parent.type.name === "detailsSummary",
+  }
+}
+
+export const TabKeys = Extension.create({
+  name: "rteTabKeys",
+  // ahead of the lists' own Tab and Shift+Tab, which this hands back to
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Tab: ({ editor }) => {
+        const { state } = editor
+        // chosen blocks hold still
+        if (chosenBlocks(state)) return true
+        const at = tabPlace(state)
+        if (at.code) return indentCode(editor, false)
+        if (at.table || at.itemHead) return false
+        if (at.summary) return true
+        return nestInto(editor)
+      },
+      "Shift-Tab": ({ editor }) => {
+        const { state } = editor
+        if (chosenBlocks(state)) return true
+        const at = tabPlace(state)
+        if (at.code) return indentCode(editor, true)
+        if (at.table) return false
+        // a top-level item stays in its list
+        if (at.itemHead) return !at.nested
+        if (at.summary) return true
+        return liftOut(editor)
+      },
+    }
+  },
+})
+
+/** whatever no other key took: Tab stays on the page, as in Notion */
+export const TabTrap = Extension.create({
+  name: "rteTabTrap",
+  priority: 1,
+  addKeyboardShortcuts() {
+    return { Tab: () => true, "Shift-Tab": () => true }
+  },
+})
+
 export const ListBackspace = Extension.create({
   name: "rteListBackspace",
   priority: 1000,

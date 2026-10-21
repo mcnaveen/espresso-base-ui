@@ -537,6 +537,7 @@ export function Editor({
           lineHeight: false,
           subscript: false,
           superscript: false,
+          tabKeys: false,
           placeholder: { placeholder },
           limit,
         }),

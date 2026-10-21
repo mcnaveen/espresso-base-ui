@@ -50,6 +50,8 @@ import {
   embedFrameAttributes,
   AtomSelection,
   ListBackspace,
+  TabKeys,
+  TabTrap,
   SmoothBlocks,
   EmbedSlot,
   ImageSlot,
@@ -87,6 +89,9 @@ export interface RichTextKitOptions {
   slashCommands?: false
   subscript?: false
   superscript?: false
+  /** Tab kept on the page, Notion's way (off: Tab moves the focus on, as a
+   * form's field should let it) */
+  tabKeys?: false
   /** the most characters the document holds */
   limit?: number | false
 }
@@ -282,6 +287,7 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
       SmoothBlocks,
       BlockSelect
     )
+    if (options.tabKeys !== false) extensions.push(TabKeys, TabTrap)
     if (options.callout !== false) extensions.push(Callout)
     if (options.attachment !== false) extensions.push(Attachment)
     if (options.audio !== false) extensions.push(Audio)
