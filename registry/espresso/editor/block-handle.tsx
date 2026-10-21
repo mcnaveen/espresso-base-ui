@@ -44,6 +44,7 @@ const FIRST_LINE = "p, h1, h2, h3, h4, h5, h6, summary, pre"
 const SKIP =
   ".ProseMirror-gapcursor, .ProseMirror-widget, .ProseMirror-separator, br"
 const ROW = '[data-type="columns"]'
+const TOGGLE = '[data-type="details"]'
 const MEDIA_ROW = '[data-type="columns"][data-media="true"]'
 /** a text column's grip: smaller, centred in the half-gutter between the
  * hairline and the text (styles.tsx: a 56px gutter, the line mid-way) */
@@ -132,6 +133,46 @@ const spans = (el: Element, y: number) => {
   return y >= r.top && y < r.bottom
 }
 
+/** a toggle's title and body, as drawn */
+function toggleParts(el: Element) {
+  const body = el.querySelector(":scope > .rte-details-body")
+  return {
+    summary: body?.querySelector<HTMLElement>(":scope > summary") ?? null,
+    content:
+      body?.querySelector<HTMLElement>(':scope > [data-type="details-content"]') ??
+      null,
+  }
+}
+
+/** the block of an open toggle's body the pointer is at — none on its
+ * title, which is the toggle's own */
+function toggleChild(el: HTMLElement, y: number) {
+  if (!el.classList.contains("is-open")) return null
+  const { content } = toggleParts(el)
+  if (!content) return null
+  const c = content.getBoundingClientRect()
+  if (y < c.top || y >= c.bottom) return null
+  let nearest: HTMLElement | null = null
+  let gap = Infinity
+  for (const child of content.children) {
+    if (!(child instanceof HTMLElement) || child.matches(SKIP)) continue
+    const r = child.getBoundingClientRect()
+    const d = y < r.top ? r.top - y : y >= r.bottom ? y - r.bottom : 0
+    if (d < gap) {
+      gap = d
+      nearest = child
+    }
+  }
+  return nearest
+}
+
+/** an empty line, alone in a toggle's body: a block set by it takes its
+ * place */
+const loneToggleLine = (el: Element) =>
+  el.parentElement?.matches('[data-type="details-content"]') === true &&
+  el.parentElement.childElementCount === 1 &&
+  isEmptyLine(el)
+
 /** the block under the pointer: a top-level block, or a list's item */
 function blockAt(
   view: View,
@@ -187,7 +228,15 @@ function blockAt(
     }
     if (inner) block = inner
   }
-  while (block.matches("ul, ol")) {
+  // into an open toggle's body, and a list's items, as deep as they go
+  for (;;) {
+    if (block.matches(TOGGLE)) {
+      const inner = toggleChild(block, y)
+      if (!inner) break
+      block = inner
+      continue
+    }
+    if (!block.matches("ul, ol")) break
     const item: HTMLElement | undefined = [...block.children].find(
       (c): c is HTMLElement => c instanceof HTMLElement && spans(c, y)
     )
@@ -493,6 +542,8 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       pos: number
       before: boolean
       side: "left" | "right" | null
+      /** into the toggle, first in its body */
+      into?: boolean
     } | null
   }>({
     dragging: false,
@@ -755,6 +806,21 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       const pos = posOf(editor.view, el)
       if (pos === null) return null
       const box = el.getBoundingClientRect()
+      // the lower half of a toggle's title: into the toggle, first in its
+      // body, its line set in under the title as Notion indents it
+      if (el.matches(TOGGLE)) {
+        const { summary } = toggleParts(el)
+        const s = summary?.getBoundingClientRect()
+        if (s && y >= s.top + s.height / 2 && y < s.bottom)
+          return {
+            el,
+            pos,
+            before: false,
+            side: null,
+            into: true,
+            box: new DOMRect(s.left, s.top, s.width, s.height),
+          }
+      }
       const zone = Math.min(SIDE_ZONE, box.width / 4)
       let side: "left" | "right" | null = null
       const run = d.source.run
@@ -799,19 +865,72 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     [editor]
   )
 
+  /**
+   * Where a landing sets the carried block: before or after its block, or
+   * first in a toggle's body. A toggle's lone empty line gives its place
+   * up, and a closed toggle taken into opens to show what came in.
+   */
+  const landingEdge = (
+    state: View["state"],
+    at: { el: Element; pos: number; before: boolean; into?: boolean }
+  ) => {
+    const node = state.doc.nodeAt(at.pos)
+    if (!node) return null
+    if (at.into && node.childCount === 2) {
+      const body = node.lastChild!
+      const edge = at.pos + 1 + node.firstChild!.nodeSize + 1
+      const first = body.firstChild
+      const lone =
+        body.childCount === 1 && first?.isTextblock && first.content.size === 0
+          ? edge
+          : null
+      return { edge, lone, open: node.attrs.open === false ? at.pos : null }
+    }
+    return {
+      edge: at.before ? at.pos : at.pos + node.nodeSize,
+      lone: loneToggleLine(at.el) ? at.pos : null,
+      open: null,
+    }
+  }
+  /** a toggle opened, and its lone empty line given up, in `tr` */
+  const settleToggle = (
+    tr: View["state"]["tr"],
+    spot: { lone: number | null; open: number | null },
+    phase: "before" | "after"
+  ) => {
+    if (phase === "before") {
+      if (spot.open === null) return
+      const t = tr.doc.nodeAt(spot.open)
+      if (t) tr.setNodeMarkup(spot.open, undefined, { ...t.attrs, open: true })
+      return
+    }
+    if (spot.lone === null) return
+    const p = tr.mapping.map(spot.lone, 1)
+    const line = tr.doc.nodeAt(p)
+    if (line?.isTextblock && line.content.size === 0) tr.delete(p, p + line.nodeSize)
+  }
+
   /** a run set down at `edge`, taken from where it was, still selected —
    * and blocks chosen with the box still chosen, where they land on the
    * page itself */
   const dropRun = React.useCallback(
-    (from: number, to: number, edge: number, chosen: boolean) => {
+    (
+      from: number,
+      to: number,
+      edge: number,
+      chosen: boolean,
+      spot: { lone: number | null; open: number | null }
+    ) => {
       if (edge >= from && edge <= to) return
       const { state } = editor.view
       const tr = state.tr
+      settleToggle(tr, spot, "before")
       tr.insert(edge, state.doc.slice(from, to).content)
       const placed = tr.steps.length
       const start = tr.mapping.map(edge, -1)
       const end = tr.mapping.map(edge, 1)
       leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+      settleToggle(tr, spot, "after")
       const after = tr.mapping.slice(placed)
       const landed = { from: after.map(start, 1), to: after.map(end, -1) }
       if (chosen) {
@@ -877,7 +996,13 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     event.preventDefault()
     event.stopPropagation()
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
-    d.landing = { el: at.el, pos: at.pos, before: at.before, side: at.side }
+    d.landing = {
+      el: at.el,
+      pos: at.pos,
+      before: at.before,
+      side: at.side,
+      into: "into" in at ? at.into : false,
+    }
     const line = d.line
     if (!line) return
     if (at.side) {
@@ -945,12 +1070,8 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       return
     }
     if (from.run) {
-      dropRun(
-        from.pos,
-        from.run.to,
-        at.before ? at.pos : at.pos + beside.nodeSize,
-        from.run.chosen
-      )
+      const spot = landingEdge(state, at)
+      if (spot) dropRun(from.pos, from.run.to, spot.edge, from.run.chosen, spot)
       return
     }
     if (at.side) {
@@ -984,16 +1105,20 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       editor.view.focus()
       return
     }
-    const edge = at.before ? at.pos : at.pos + beside.nodeSize
+    const spot = landingEdge(state, at)
+    if (!spot) return
+    const { edge } = spot
     // the block is already there
     if (edge === from.pos || edge === from.pos + node.nodeSize) return
     // placed first, then taken from where it was: the insert only ever
     // adds, so the source's position still maps
     const tr = state.tr
     const cell = emptiedCell(state, from.pos)
+    settleToggle(tr, spot, "before")
     tr.insert(edge, node)
     const placed = tr.steps.length
     leaveBehind(tr, from.pos, node.nodeSize, cell)
+    settleToggle(tr, spot, "after")
     const to = tr.mapping.slice(placed).map(edge, at.before ? -1 : 1)
     // the block, wherever the fit put it, stays selected
     let moved: number | null = null
