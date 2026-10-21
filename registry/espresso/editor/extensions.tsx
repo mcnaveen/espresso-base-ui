@@ -56,6 +56,7 @@ import {
   Grid2Icon,
   Grid3Icon,
   Grid4Icon,
+  Grid5Icon,
   Heading1Icon,
   Heading2Icon,
   Heading3Icon,
@@ -1574,12 +1575,10 @@ export const SLASH_ITEMS: SuggestItem[] = [
   { id: "columns2", label: "2 columns", group: "Layout", icon: <Grid2Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns2") },
   { id: "columns3", label: "3 columns", group: "Layout", icon: <Grid3Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns3") },
   { id: "columns4", label: "4 columns", group: "Layout", icon: <Grid4Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns4") },
+  { id: "columns5", label: "5 columns", group: "Layout", icon: <Grid5Icon className="size-4" />, run: (ed) => applyBlock(ed.chain().focus(), "columns5") },
   // ---- the media, as the toolbar's Insert menu lays them: a picture's
-  // slot, the rows of pictures, audio from the disk, the embed's slot
+  // slot, audio from the disk, the embed's slot
   { id: "image", label: "Image", group: "Media", icon: <ImageIcon className="size-4" />, run: (ed) => ed.chain().focus().insertImageSlot().run() },
-  { id: "image1", label: "1 image column", group: "Media", icon: <ImageIcon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(1).run() },
-  { id: "image2", label: "2 image columns", group: "Media", icon: <Grid2Icon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(2).run() },
-  { id: "image3", label: "3 image columns", group: "Media", icon: <Grid3Icon className="size-4" />, run: (ed) => ed.chain().focus().insertImageColumns(3).run() },
   { id: "video", label: "Video", group: "Media", icon: <VideoIcon className="size-4" />, run: () => pick("rte-video-input")() },
   { id: "audio", label: "Audio", group: "Media", icon: <AudioWavesIcon className="size-4" />, run: () => pick("rte-audio-input")() },
   { id: "file", label: "File", group: "Media", icon: <FileUploadIcon className="size-4" />, run: () => pick("rte-attach-input")() },
@@ -1616,7 +1615,7 @@ export const SlashCommands = Extension.create({
 })
 
 /* ---------------------------------- columns --------------------------------
- * Two to four blocks side by side, each a column of blocks — the branch's
+ * Two to five blocks side by side, each a column of blocks — the branch's
  * multi-column layout. `setColumns` re-counts the row the selection is in
  * (columns added empty, or the extra ones folded into the last kept), or
  * lays a fresh row.
@@ -1649,7 +1648,7 @@ export const Columns = Node.create({
   group: "block",
   // one column is a layout too: its blocks stacked, still carried and
   // rearranged as a layout's; a block set beside one makes columns again
-  content: "column{1,4}",
+  content: "column{1,5}",
   defining: true,
   addAttributes() {
     return {
@@ -1755,17 +1754,23 @@ export const Columns = Node.create({
 
           const column = state.schema.nodes.column
           const columns = row.content.content.slice(0, count)
+          const blank = (cell: PMNode) =>
+            cell.childCount === 1 &&
+            cell.firstChild!.isTextblock &&
+            cell.firstChild!.content.size === 0
           if (count > row.childCount) {
             // grown: the new columns stand empty on the right
             for (let i = row.childCount; i < count; i++)
               columns.push(column.createAndFill()!)
           } else {
             // shrunk: what the dropped columns held goes to the end of the
-            // last column kept, in order, so nothing is lost
+            // last column kept, in order, so nothing is lost; a column with
+            // nothing written in it brings no empty line along
             const last = columns[count - 1]
             let content = last.content
             for (let i = count; i < row.childCount; i++)
-              content = content.append(row.child(i).content)
+              if (!blank(row.child(i)))
+                content = content.append(row.child(i).content)
             columns[count - 1] = last.copy(content)
           }
 
@@ -1781,15 +1786,19 @@ export const Columns = Node.create({
           // carried along with the text folded into the last one
           const index = $from.index(depth)
           let pos = $from.pos
+          let bias = 1
           if (index >= count) {
             let start = from + 1
             for (let i = 0; i < count - 1; i++) start += row.child(i).nodeSize
             let before = row.child(count - 1).content.size
             for (let i = count; i < index; i++)
-              before += row.child(i).content.size
-            pos = start + 1 + before + ($from.pos - $from.start(depth + 1))
+              if (!blank(row.child(i))) before += row.child(i).content.size
+            // in a blank column, which is gone: the end of the last kept
+            pos = start + 1 + before
+            if (blank(row.child(index))) bias = -1
+            else pos += $from.pos - $from.start(depth + 1)
           }
-          tr.setSelection(TextSelection.near(tr.doc.resolve(pos)))
+          tr.setSelection(TextSelection.near(tr.doc.resolve(pos), bias))
           return true
         },
     }
@@ -1879,6 +1888,7 @@ export const BLOCKS = [
   { value: "columns2", label: "2 columns", Icon: Grid2Icon },
   { value: "columns3", label: "3 columns", Icon: Grid3Icon },
   { value: "columns4", label: "4 columns", Icon: Grid4Icon },
+  { value: "columns5", label: "5 columns", Icon: Grid5Icon },
 ] as const
 export type BlockValue = (typeof BLOCKS)[number]["value"]
 
@@ -1921,6 +1931,7 @@ export function applyBlock(chain: ChainedCommands, value: BlockValue) {
   else if (value === "columns2") chain.setColumns(2).run()
   else if (value === "columns3") chain.setColumns(3).run()
   else if (value === "columns4") chain.setColumns(4).run()
+  else if (value === "columns5") chain.setColumns(5).run()
 }
 
 /* ------------------------------ fonts and sizes ----------------------------- */

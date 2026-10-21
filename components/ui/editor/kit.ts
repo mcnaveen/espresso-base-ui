@@ -32,6 +32,7 @@ import { Placeholder } from "@tiptap/extensions"
 
 import { ReactNodeViewRenderer } from "@tiptap/react"
 
+import { BlockSelect } from "./block-select"
 import { LinkEditor } from "./link-card"
 import { EmbedView, ImageView } from "./media"
 import {
@@ -278,7 +279,8 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
       CommentMark,
       AtomSelection,
       ListBackspace,
-      SmoothBlocks
+      SmoothBlocks,
+      BlockSelect
     )
     if (options.callout !== false) extensions.push(Callout)
     if (options.attachment !== false) extensions.push(Attachment)

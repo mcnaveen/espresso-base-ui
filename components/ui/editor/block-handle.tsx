@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/tooltip"
 import { DragIcon } from "@/components/ui/rich-text-editor-icons"
 import { pressHandlers } from "./press"
+import { blockSelectKey, chosenBlocks, eachChosen } from "./block-select"
 import { BLOCKS_SETTLED, type View } from "./extensions"
 
 /** how far left of the document the grip still answers the pointer */
@@ -58,7 +59,7 @@ const TEXT_GRIP_ROOM = HALF_GUTTER - 4
 const SHORT_BLOCK = 64
 const FIRST_GRIP_GAP = 4
 const ROW_GRIP_GAP = 2
-const MAX_COLUMNS = 4
+const MAX_COLUMNS = 5
 /**
  * Beside a block, as Notion drops one: a pointer this far into a block
  * from its left edge, or near its right edge, lands the block beside it
@@ -319,7 +320,7 @@ function dropBeside(
   const $to = state.doc.resolve(to)
 
   // a column's only block beside another column of its own layout: the
-  // columns change places in one step (inserting first would make a fifth
+  // columns change places in one step (inserting first would make a sixth
   // column of a full row, which the layout does not hold); their shares
   // go with them
   if (
@@ -402,6 +403,69 @@ function dropBeside(
   return tr
 }
 
+/** the cell a run from `from` to `to` is the whole of, in a row of prose:
+ * carried off, it takes its cell along */
+function wholeCell(state: View["state"], from: number, to: number) {
+  const $from = state.doc.resolve(from)
+  if ($from.parent.type !== state.schema.nodes.column) return null
+  if (from !== $from.start() || to !== $from.end()) return null
+  if ($from.node($from.depth - 1).attrs.media) return null
+  return { pos: $from.before(), row: $from.before($from.depth - 1) }
+}
+
+/**
+ * The run of blocks from `from` to `to` set beside the block at `to`, on
+ * `side`, as one new cell: of the row `at` is in, or, `at` standing alone,
+ * of a row of two made of them both. Where the run came from closes up
+ * behind it. The range the run now fills is returned with the step.
+ */
+function dropRunBeside(
+  state: View["state"],
+  from: number,
+  to: number,
+  at: number,
+  side: "left" | "right"
+) {
+  const { schema } = state
+  const columns = schema.nodes.columns
+  const column = schema.nodes.column
+  const beside = state.doc.nodeAt(at)
+  if (!columns || !column || !beside) return null
+  const content = state.doc.slice(from, to).content
+  const tr = state.tr
+  const $at = state.doc.resolve(at)
+  let start: number
+  if ($at.parent.type === column) {
+    const cellPos = $at.before()
+    const spot = side === "left" ? cellPos : cellPos + $at.parent.nodeSize
+    tr.insert(spot, column.create(null, content))
+    start = spot + 1
+    const rowPos = $at.before($at.depth - 1)
+    const row = tr.doc.nodeAt(rowPos)!
+    tr.setNodeMarkup(rowPos, undefined, {
+      ...row.attrs,
+      count: row.childCount,
+      widths: null,
+    })
+  } else {
+    const ours = column.create(null, content)
+    const theirs = column.create(null, beside)
+    const cells = side === "left" ? [ours, theirs] : [theirs, ours]
+    tr.replaceWith(at, at + beside.nodeSize, columns.create({ count: 2 }, cells))
+    start = side === "left" ? at + 2 : at + 2 + theirs.nodeSize
+  }
+  const placed = tr.steps.length
+  const landed = { from: start, to: start + content.size }
+
+  // the run leaves where it was
+  leaveBehind(tr, from, to - from, wholeCell(state, from, to))
+  const after = tr.mapping.slice(placed)
+  return {
+    tr,
+    landed: { from: after.map(landed.from, 1), to: after.map(landed.to, -1) },
+  }
+}
+
 export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   const [target, setTarget] = React.useState<HTMLElement | null>(null)
   const [point, setPoint] = React.useState({ left: 0, top: 0 })
@@ -419,7 +483,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     source: {
       el: HTMLElement
       pos: number
-      run?: { to: number; doms: HTMLElement[] }
+      run?: { to: number; doms: HTMLElement[]; chosen: boolean }
     } | null
     grab: { dx: number; dy: number }
     ghost: HTMLElement | null
@@ -448,6 +512,18 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
    */
   const selectedRun = React.useCallback(() => {
     if (editor.isDestroyed) return null
+    // blocks chosen with the box are a run too, one block or many
+    const chosen = chosenBlocks(editor.state)
+    if (chosen) {
+      const doms: HTMLElement[] = []
+      eachChosen(editor.state.doc, chosen, (_node, pos) => {
+        const dom = editor.view.nodeDOM(pos)
+        if (dom instanceof HTMLElement) doms.push(dom)
+      })
+      return doms.length
+        ? { from: chosen.from, to: chosen.to, doms, chosen: true }
+        : null
+    }
     const sel = editor.state.selection
     if (sel.empty || sel instanceof NodeSelection) return null
     const range = sel.$from.blockRange(sel.$to)
@@ -459,7 +535,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       if (dom instanceof HTMLElement) doms.push(dom)
       pos += range.parent.child(i).nodeSize
     }
-    return { from: range.start, to: range.end, doms }
+    return { from: range.start, to: range.end, doms, chosen: false }
   }, [editor])
   const inRun = (run: { doms: HTMLElement[] }, el: Element) =>
     run.doms.some((d) => d === el || d.contains(el))
@@ -623,7 +699,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   /**
    * A column's only block set beside another column of the same layout:
    * the columns change places, their number stays, so even a full row
-   * (four) takes it
+   * (five) takes it
    */
   const reorders = (source: HTMLElement, el: HTMLElement) => {
     const from = source.parentElement
@@ -674,17 +750,26 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
           box: inner.getBoundingClientRect(),
         }
       }
-      // a run lands outside itself, and only above or below a block
+      // a run lands outside itself
       if (d.source.run && inRun(d.source.run, el)) return null
       const pos = posOf(editor.view, el)
       if (pos === null) return null
       const box = el.getBoundingClientRect()
       const zone = Math.min(SIDE_ZONE, box.width / 4)
       let side: "left" | "right" | null = null
+      const run = d.source.run
+      // a run stands beside a block as a new cell — never one holding a row
+      // itself, for a row is no column's block
+      const runSideable =
+        !!run &&
+        sideable(el) &&
+        !el.closest(MEDIA_ROW) &&
+        !run.doms.some((x) => x.matches(ROW) || x.querySelector(ROW))
       if (
-        !d.source.run &&
-        (sideable(el) || reorders(d.source.el, el)) &&
-        !swapsWith(d.source.el, el)
+        run
+          ? runSideable
+          : (sideable(el) || reorders(d.source.el, el)) &&
+            !swapsWith(d.source.el, el)
       ) {
         if (x >= box.left + SIDE_INSET && x < box.left + SIDE_INSET + zone)
           side = "left"
@@ -714,9 +799,11 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     [editor]
   )
 
-  /** a run set down at `edge`, taken from where it was, still selected */
+  /** a run set down at `edge`, taken from where it was, still selected —
+   * and blocks chosen with the box still chosen, where they land on the
+   * page itself */
   const dropRun = React.useCallback(
-    (from: number, to: number, edge: number) => {
+    (from: number, to: number, edge: number, chosen: boolean) => {
       if (edge >= from && edge <= to) return
       const { state } = editor.view
       const tr = state.tr
@@ -724,14 +811,19 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       const placed = tr.steps.length
       const start = tr.mapping.map(edge, -1)
       const end = tr.mapping.map(edge, 1)
-      tr.delete(tr.mapping.map(from), tr.mapping.map(to))
+      leaveBehind(tr, from, to - from, wholeCell(state, from, to))
       const after = tr.mapping.slice(placed)
-      tr.setSelection(
-        TextSelection.between(
-          tr.doc.resolve(after.map(start, 1)),
-          tr.doc.resolve(after.map(end, -1))
+      const landed = { from: after.map(start, 1), to: after.map(end, -1) }
+      if (chosen) {
+        tr.setSelection(TextSelection.near(tr.doc.resolve(landed.from)))
+        tr.setMeta(blockSelectKey, landed)
+      } else
+        tr.setSelection(
+          TextSelection.between(
+            tr.doc.resolve(landed.from),
+            tr.doc.resolve(landed.to)
+          )
         )
-      )
       editor.view.dispatch(tr.scrollIntoView())
       editor.view.focus()
     },
@@ -834,11 +926,30 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
     const node = state.doc.nodeAt(from.pos)
     const beside = state.doc.nodeAt(at.pos)
     if (!node || !beside) return
+    if (from.run && at.side) {
+      const out = dropRunBeside(state, from.pos, from.run.to, at.pos, at.side)
+      if (!out) return
+      const { tr, landed } = out
+      if (from.run.chosen) {
+        tr.setSelection(TextSelection.near(tr.doc.resolve(landed.from)))
+        tr.setMeta(blockSelectKey, landed)
+      } else
+        tr.setSelection(
+          TextSelection.between(
+            tr.doc.resolve(landed.from),
+            tr.doc.resolve(landed.to)
+          )
+        )
+      editor.view.dispatch(tr.scrollIntoView())
+      editor.view.focus()
+      return
+    }
     if (from.run) {
       dropRun(
         from.pos,
         from.run.to,
-        at.before ? at.pos : at.pos + beside.nodeSize
+        at.before ? at.pos : at.pos + beside.nodeSize,
+        from.run.chosen
       )
       return
     }
@@ -973,7 +1084,7 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       d.source = {
         el: first,
         pos: run.from,
-        run: { to: run.to, doms: run.doms },
+        run: { to: run.to, doms: run.doms, chosen: run.chosen },
       }
       d.grab = { dx: event.clientX - r0.left, dy: event.clientY - r0.top }
       const slice = editor.state.doc.slice(run.from, run.to)

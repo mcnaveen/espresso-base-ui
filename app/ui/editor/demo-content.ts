@@ -182,9 +182,10 @@ welcome("jacob@frappe.in")</code></pre>
 </ul>
 <hr>
 <h2>Multi-column layout</h2>
-<div data-type="columns" data-count="2">
+<div data-type="columns" data-count="3">
   <div data-type="column"><p>Frappe CRM helps businesses manage leads, customers, and sales opportunities from a single platform. Track every interaction, automate repetitive tasks, and close deals faster with a streamlined, collaborative workflow.</p></div>
   <div data-type="column"><p>Frappe Helpdesk enables teams to deliver fast, efficient customer support from a unified workspace. Manage tickets, automate workflows, track SLAs, and resolve issues seamlessly with powerful collaboration tools.</p></div>
+  <div data-type="column"><p>Frappe HR brings hiring, onboarding, attendance, leave, and payroll together in one place. Give every employee a self-service portal and keep people operations running smoothly as the team grows.</p></div>
 </div>
 <p></p>
 `

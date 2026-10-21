@@ -459,7 +459,6 @@ export function ImageSlotView(props: NodeViewProps) {
       width: 0,
       height: 0,
     }))
-    freshImages.add(src)
     editor
       .chain()
       .focus()
@@ -473,7 +472,6 @@ export function ImageSlotView(props: NodeViewProps) {
   const takeLink = (image: { src: string; width: number; height: number }) => {
     const r = range()
     if (!r) return
-    freshImages.add(image.src)
     editor
       .chain()
       .focus()
@@ -1146,10 +1144,6 @@ async function downloadMedia(src: string) {
   }
 }
 
-/** the pictures laid down this session: their caption field opens for
- * them, right where a caption is normally written */
-export const freshImages = new Set<string>()
-
 const SIZE_OPTIONS = [
   { value: 1, label: "Full width" },
   { value: 0.75, label: "Large" },
@@ -1170,7 +1164,8 @@ export function ImageView(props: NodeViewProps) {
   const align = (node.attrs.align as string | null) ?? "center"
   const width = node.attrs.width as number | null
   const [menuOpen, setMenuOpen] = React.useState(false)
-  // the user's explicit caption toggle; null means "use the default"
+  // the user's explicit caption toggle; null means "use the default": a
+  // caption shows only once one is written, Caption in the menu adds one
   const [captionToggle, setCaptionToggle] = React.useState<boolean | null>(
     null
   )
@@ -1193,7 +1188,7 @@ export function ImageView(props: NodeViewProps) {
   const showCaption =
     captionToggle !== null
       ? captionToggle
-      : Boolean(node.attrs.caption) || (editable && freshImages.has(src))
+      : Boolean(node.attrs.caption)
 
   const selectMedia = React.useCallback(() => {
     const pos = getPos()

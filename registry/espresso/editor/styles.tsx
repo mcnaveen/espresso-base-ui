@@ -153,6 +153,9 @@ const CSS = `
 .rte-doc [data-type='columns'][data-count='4'] {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+.rte-doc [data-type='columns'][data-count='5'] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
 .rte-doc [data-type='column'] {
   position: relative;
   min-width: 0;
@@ -1250,6 +1253,48 @@ body.rte-tc-dragging .rte-tc-handle {
 body.rte-col-drag {
   cursor: col-resize;
   user-select: none;
+}
+
+/* ================= the box selection (BlockMarquee) ================ */
+/* Notion's blue: the box drawn faint with a hairline, each chosen block
+   tinted on top of its own fill (an inset shadow paints above a block's
+   background and under its content) and reaching 3px past its sides —
+   not above or below, where two chosen blocks would overlap darker */
+.rte {
+  --rte-chosen: rgb(35 131 226 / 0.14);
+}
+.dark .rte {
+  --rte-chosen: rgb(35 131 226 / 0.24);
+}
+.rte-marquee-box {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  background: rgb(35 131 226 / 0.1);
+  border: 1px solid rgb(35 131 226 / 0.35);
+  border-radius: 2px;
+}
+body.rte-marquee {
+  user-select: none;
+  cursor: default;
+}
+body.rte-marquee .rte-bh-handle,
+body.rte-marquee .rte-cr {
+  display: none;
+}
+.ProseMirror .rte-block-chosen {
+  border-radius: 4px;
+  box-shadow:
+    -3px 0 0 0 var(--rte-chosen),
+    3px 0 0 0 var(--rte-chosen),
+    inset 0 0 0 9999px var(--rte-chosen);
+}
+/* the caret waits unseen while blocks are chosen, and no text shows chosen */
+.ProseMirror.has-chosen-blocks {
+  caret-color: transparent;
+}
+.ProseMirror.has-chosen-blocks ::selection {
+  background: transparent;
 }
 
 /* ================= the link card (RteLinkPanel) ================ */
