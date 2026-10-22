@@ -900,7 +900,7 @@ export function AudioView(props: NodeViewProps) {
   return (
     <NodeViewWrapper
       as="div"
-      className="rte-player flex h-[42px] w-full items-center gap-2 rounded-xl border border-border-soft bg-input px-[5px] py-0.5"
+      className="rte-player flex h-[42px] w-full items-center gap-2 rounded-xl bg-input px-[5px] py-0.5"
       data-type="audio"
       aria-label={node.attrs.title || "Audio"}
     >
@@ -1173,6 +1173,19 @@ const ALIGN_OPTIONS = [
   { value: "right", label: "Right" },
 ] as const
 
+const MEDIA_MIN = 50
+// the most a pull past the bound stretches the picture, however far it goes
+const MEDIA_STRETCH = 36
+const MEDIA_SPRING_MS = 320
+// a touch past the bound on the way back, then home
+const MEDIA_SPRING = `width ${MEDIA_SPRING_MS}ms cubic-bezier(0.3, 1.35, 0.5, 1), height ${MEDIA_SPRING_MS}ms cubic-bezier(0.3, 1.35, 0.5, 1)`
+// the band's give: the first pixels past the bound show about half, then
+// each counts for less, and it never reaches `limit`
+const stretch = (over: number, limit: number) =>
+  limit * (1 - 1 / ((over * 0.55) / limit + 1))
+const reducedMotion = () =>
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches
+
 export function ImageView(props: NodeViewProps) {
   const { node, editor, selected, getPos, updateAttributes, deleteNode } =
     props
@@ -1238,14 +1251,11 @@ export function ImageView(props: NodeViewProps) {
     const startX = event.clientX
     const startWidth = el.offsetWidth
     const aspect = el.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
-    // in a picture row the cell is the most there is; elsewhere the page
-    const inRow = !!box?.closest("[data-type='columns'][data-media='true']")
+    // the picture grows to the room it stands in — its column, its cell, or
+    // the page — and no further
     const maxWidth =
-      (inRow ? box?.parentElement?.clientWidth : undefined) ||
-      editor.view.dom.clientWidth
-    const onMove = (ev: PointerEvent) => {
-      const delta = (ev.clientX - startX) * (edge === "left" ? -1 : 1)
-      const w = Math.max(50, Math.min(startWidth + delta, maxWidth))
+      box?.parentElement?.clientWidth || editor.view.dom.clientWidth
+    const size = (w: number) => {
       el.style.width = `${w}px`
       el.style.height = `${w * aspect}px`
       if (box) {
@@ -1253,19 +1263,50 @@ export function ImageView(props: NodeViewProps) {
         box.setAttribute("data-sized", "")
       }
     }
+    // a pull past either bound stretches it a little, ever harder, as a
+    // rubber band does; let go, and it springs back to the bound
+    let raw = startWidth
+    const onMove = (ev: PointerEvent) => {
+      const delta = (ev.clientX - startX) * (edge === "left" ? -1 : 1)
+      raw = startWidth + delta
+      if (box) box.style.maxWidth = "none"
+      size(
+        raw > maxWidth
+          ? maxWidth + stretch(raw - maxWidth, MEDIA_STRETCH)
+          : raw < MEDIA_MIN
+            ? MEDIA_MIN - stretch(MEDIA_MIN - raw, MEDIA_MIN / 3)
+            : raw
+      )
+    }
     const onUp = () => {
       window.removeEventListener("pointermove", onMove)
       window.removeEventListener("pointerup", onUp)
       window.removeEventListener("pointercancel", onUp)
       document.body.style.cursor = ""
       document.body.classList.remove("rte-media-resizing")
-      const w = el.offsetWidth
-      const h = el.offsetHeight
-      commitSize(w, h)
-      requestAnimationFrame(() => {
-        el.style.width = ""
-        el.style.height = ""
-      })
+      const w = Math.max(MEDIA_MIN, Math.min(raw, maxWidth))
+      const settle = () => {
+        if (box) box.style.maxWidth = ""
+        commitSize(w, w * aspect)
+        requestAnimationFrame(() => {
+          el.style.width = ""
+          el.style.height = ""
+        })
+      }
+      const banded = Math.abs(el.offsetWidth - w) > 0.5
+      if (!banded || !box || reducedMotion()) return settle()
+      const springs = [el, box]
+      for (const s of springs) s.style.transition = MEDIA_SPRING
+      size(w)
+      let done = false
+      const end = () => {
+        if (done) return
+        done = true
+        for (const s of springs) s.style.transition = ""
+        settle()
+      }
+      box.addEventListener("transitionend", end, { once: true })
+      window.setTimeout(end, MEDIA_SPRING_MS + 60)
     }
     document.body.classList.add("rte-media-resizing")
     window.addEventListener("pointermove", onMove)
@@ -1277,7 +1318,7 @@ export function ImageView(props: NodeViewProps) {
     const el = imgRef.current
     const current = width || el?.offsetWidth || 320
     const aspect = el?.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
-    const w = Math.max(50, current + delta)
+    const w = Math.max(MEDIA_MIN, current + delta)
     commitSize(w, w * aspect)
   }
   const resizeTo = (fraction: number) => {
