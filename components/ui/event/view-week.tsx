@@ -3,11 +3,12 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { useEventContext } from "./context"
 import { EventGridPill } from "./grid-pill"
 import { EventTimeMarker } from "./time-marker"
 import { useEventData, useHourGrid, useNow } from "./hooks"
-import { daysList, parseDate } from "./utils"
+import { MORE_BUTTON_CLASS, daysList, parseDate } from "./utils"
 import {
   COLUMN_INSET,
   PILL_INSET,
@@ -158,11 +159,12 @@ export function EventWeekly({
                 }}
               >
                 {hiddenCount(col) ? (
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="xs"
                     className={cn(
-                      "cursor-pointer rounded-[8px] border border-dashed border-[color:var(--ec-outline-gray-1)] text-[12px] text-[color:var(--ec-ink-gray-6)]",
-                      isNarrow ? "self-stretch px-1" : "w-fit px-2 text-left"
+                      MORE_BUTTON_CLASS,
+                      isNarrow ? "self-stretch px-1" : "w-fit justify-start px-2"
                     )}
                     style={{
                       marginTop: `${visibleLanes * lanePitch + laneGap}px`,
@@ -176,7 +178,7 @@ export function EventWeekly({
                     }}
                   >
                     {isNarrow ? `+${hiddenCount(col)}` : `+${hiddenCount(col)} more`}
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             ))}

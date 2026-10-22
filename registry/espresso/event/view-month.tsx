@@ -3,10 +3,11 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { useEventContext } from "./context"
 import { EventMonthPill } from "./month-pill"
 import { useNow, useStripScroll } from "./hooks"
-import { daysList, parseDate } from "./utils"
+import { MORE_BUTTON_CLASS, daysList, parseDate } from "./utils"
 import {
   COLUMN_INSET,
   COLUMN_RULE,
@@ -323,12 +324,30 @@ export function EventMonthly({
                         />
                       ))}
                       {row.cells[col].hidden ? (
-                        <div
-                          className="flex h-7 items-center px-1.5 text-[12px] text-[color:var(--ec-ink-gray-7)]"
-                          style={{ height: `${laneHeight}px` }}
-                        >
-                          {row.cells[col].hidden} more
-                        </div>
+                        isNarrow ? (
+                          // Narrow, the count alone — "more" truncated to an
+                          // ellipsis in a column this tight — and the way to
+                          // the day, where the whole of it fits.
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className={cn(MORE_BUTTON_CLASS, "w-full px-0")}
+                            style={{ height: `${laneHeight}px` }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openDay(date)
+                            }}
+                          >
+                            {`+${row.cells[col].hidden}`}
+                          </Button>
+                        ) : (
+                          <div
+                            className="flex h-7 items-center px-1.5 text-[12px] text-[color:var(--ec-ink-gray-7)]"
+                            style={{ height: `${laneHeight}px` }}
+                          >
+                            {row.cells[col].hidden} more
+                          </div>
+                        )
                       ) : null}
                     </div>
                   ) : null}

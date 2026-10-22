@@ -3,11 +3,12 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { useEventContext } from "./context"
 import { EventGridPill } from "./grid-pill"
 import { EventTimeMarker } from "./time-marker"
 import { useEventData, useHourGrid } from "./hooks"
-import { parseDate } from "./utils"
+import { MORE_BUTTON_CLASS, parseDate } from "./utils"
 import { PILL_INSET, PILL_MARGIN, eventDays } from "./span"
 import type { CalendarEvent, EventConfig } from "./types"
 
@@ -170,17 +171,21 @@ export function EventDaily({
             />
           ))}
           {hiddenFullDayEvents || measuring ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               data-all-day-more=""
-              className="mx-px h-auto min-h-7 w-fit shrink-0 cursor-pointer self-stretch rounded-[8px] border border-dashed border-[color:var(--ec-outline-gray-1)] px-2 text-[12px] text-[color:var(--ec-ink-gray-6)]"
+              className={cn(
+                MORE_BUTTON_CLASS,
+                "mx-px min-h-7 w-fit shrink-0 self-stretch px-2"
+              )}
               onClick={(e) => {
                 e.stopPropagation()
                 setCollapsed(false)
               }}
             >
               {`+${hiddenFullDayEvents || dayFullDayEvents.length} more`}
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
