@@ -158,6 +158,42 @@
       ]
     },
     {
+      "name": "email-composer",
+      "type": "registry:ui",
+      "title": "Email Composer",
+      "description": "A floating new-message window \u2014 recipient chips with suggestions that fold to one line, Cc/Bcc, subject, a rich-text body with colour, link, emoji and images, attachments, Send with Schedule send, pop out and discard \u2014 the frappe-ui espresso playground's composer, ported to React.",
+      "dependencies": [
+        "@base-ui/react",
+        "@tiptap/core",
+        "@tiptap/pm",
+        "@tiptap/react",
+        "lucide-react"
+      ],
+      "registryDependencies": [
+        "https://espresso-base-ui.vercel.app/r/espresso-theme.json",
+        "https://espresso-base-ui.vercel.app/r/editor.json",
+        "https://espresso-base-ui.vercel.app/r/emoji-picker.json",
+        "https://espresso-base-ui.vercel.app/r/avatar.json",
+        "https://espresso-base-ui.vercel.app/r/button.json",
+        "https://espresso-base-ui.vercel.app/r/dropdown-menu.json",
+        "https://espresso-base-ui.vercel.app/r/input.json",
+        "https://espresso-base-ui.vercel.app/r/popover.json",
+        "https://espresso-base-ui.vercel.app/r/tooltip.json"
+      ],
+      "files": [
+        {
+          "path": "registry/espresso/email-composer/email-composer.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/email-composer.tsx"
+        },
+        {
+          "path": "registry/espresso/email-composer/email-composer-icons.tsx",
+          "type": "registry:ui",
+          "target": "components/ui/email-composer-icons.tsx"
+        }
+      ]
+    },
+    {
       "name": "event",
       "type": "registry:ui",
       "title": "Event",

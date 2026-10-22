@@ -286,6 +286,14 @@ export function BlockMarquee({ editor }: { editor: TiptapEditor }) {
             base = only.pos + 1 + node.firstChild!.nodeSize + 1
             continue
           }
+          // a callout's blocks, clear of its first line (the callout's own)
+          if (node.type.name === "callout") {
+            const title = view.nodeDOM(only.pos + 1)
+            if (!(title instanceof Element) || touches(title)) break
+            holder = node
+            base = only.pos + 1
+            continue
+          }
           // a list's items are blocks of their own: into the list, and
           // into an item when the box keeps off the item's own first line
           if (LISTS.has(node.type.name)) {

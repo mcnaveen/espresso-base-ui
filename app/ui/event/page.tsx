@@ -18,6 +18,12 @@ import {
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+} from "@/components/ui/breadcrumb"
 import { MonthYearCalendar } from "@/components/ui/event/month-year-calendar"
 import {
   DropdownMenu,
@@ -27,7 +33,11 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Tabs, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Event, type CalendarEvent } from "@/components/ui/event"
+import {
+  Event,
+  setActiveEvent,
+  type CalendarEvent,
+} from "@/components/ui/event"
 
 import { AvatarStack } from "./avatar-stack"
 import { EventPanel } from "./event-panel"
@@ -190,6 +200,14 @@ export default function EventPage() {
     },
     []
   )
+
+  // The event is marked open for as long as its panel is (the component marks
+  // it on the click); the panel closed — by its ×, a delete or anything else —
+  // the mark goes too, or the card kept its open fill with nothing open.
+  const panelEvent = panel?.event ?? null
+  React.useEffect(() => {
+    if (!panelEvent) setActiveEvent("")
+  }, [panelEvent])
 
   const openNewOf = (kind: "Event" | "Task") => {
     setDraftTitle("")
@@ -426,9 +444,60 @@ export default function EventPage() {
       if (pill) window.addEventListener("pointerup", onCardUp, { once: true })
     }
 
+    // Hovering one piece of an event that runs across weeks (Month) or past
+    // midnight (Week, Day) lights every piece of it, as opening it already
+    // marks every piece. The pieces carry no id, so they are walked from the
+    // hovered one: the same title and fill, each running on from the last —
+    // a piece cut square on its trailing side followed by one cut square on
+    // its leading side.
+    const HOVER_GROUP = "data-hover-group"
+    const piecesOf = (pill: HTMLElement) => {
+      const month = !!pill.closest("[data-week-row]")
+      const scope = month ? "[data-week-row] .event" : "[data-time-grid] .event"
+      const [lead, trail] = month
+        ? ["rounded-l-none", "rounded-r-none"]
+        : ["rounded-t-none", "rounded-b-none"]
+      const title = (n: HTMLElement) => n.innerText.trim().split("\n")[0]
+      const bg = pill.style.getPropertyValue("--bg")
+      const same = [...el.querySelectorAll<HTMLElement>(scope)].filter(
+        (n) => title(n) === title(pill) && n.style.getPropertyValue("--bg") === bg
+      )
+      const at = same.indexOf(pill)
+      if (at < 0) return [pill]
+      const group = [pill]
+      for (let i = at; i > 0; i--) {
+        if (!same[i].classList.contains(lead)) break
+        if (!same[i - 1].classList.contains(trail)) break
+        group.push(same[i - 1])
+      }
+      for (let i = at; i < same.length - 1; i++) {
+        if (!same[i].classList.contains(trail)) break
+        if (!same[i + 1].classList.contains(lead)) break
+        group.push(same[i + 1])
+      }
+      return group
+    }
+    const clearHoverGroup = () => {
+      for (const n of el.querySelectorAll(`[${HOVER_GROUP}]`))
+        n.removeAttribute(HOVER_GROUP)
+    }
+    const onCardOver = (e: PointerEvent) => {
+      const pill = (e.target as HTMLElement).closest<HTMLElement>(".event")
+      if (pill?.hasAttribute(HOVER_GROUP)) return
+      clearHoverGroup()
+      if (!pill || pill.closest(".calendar-row")) return
+      const group = piecesOf(pill)
+      if (group.length < 2) return
+      for (const n of group) n.setAttribute(HOVER_GROUP, "")
+    }
+
     el.addEventListener("pointerdown", onCardDown, true)
+    el.addEventListener("pointerover", onCardOver)
+    el.addEventListener("pointerleave", clearHoverGroup)
     el.addEventListener("dragstart", noAgendaDrag, true)
     return () => {
+      el.removeEventListener("pointerover", onCardOver)
+      el.removeEventListener("pointerleave", clearHoverGroup)
       el.removeEventListener("pointerdown", onCardDown, true)
       el.removeEventListener("dragstart", noAgendaDrag, true)
       window.removeEventListener("pointerup", onCardUp)
@@ -460,10 +529,16 @@ export default function EventPage() {
       <div className="flex min-w-0 flex-1 flex-col">
         {/* The app header: 48 tall, a rule along the bottom. */}
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-[color:var(--ec-outline-gray-1,var(--border-soft))] py-2.5 pr-5 pl-[18px]">
-          {/* The playground's breadcrumb crumb: text-lg-medium = 16px/500. */}
-          <span className="text-[16px] leading-[1.35] font-medium text-foreground">
-            Event
-          </span>
+          {/* The page's one crumb, as the playground's Breadcrumbs draws it. */}
+          <Breadcrumb size="md">
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbPage className="px-0.5 text-lg font-medium text-foreground">
+                  Event
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
           <div className="flex items-center gap-2">
             <AvatarStack names={headerPeople} />
             <Button size="sm" variant="outline">
@@ -536,12 +611,14 @@ export default function EventPage() {
                         render={
                           <button
                             type="button"
-                            className="-ml-2 flex h-8 items-center gap-2 rounded-[8px] px-2 text-[16px] font-medium text-[color:var(--ec-ink-gray-7)] transition-colors hover:bg-[color:var(--ec-surface-gray-2)] active:bg-[color:var(--ec-surface-gray-3)]"
+                            className="group -ml-2 flex h-8 items-center gap-2 rounded-[8px] px-2 text-[16px] font-medium text-[color:var(--ec-ink-gray-7)] outline-none transition-colors hover:text-[color:var(--ec-ink-gray-6)] focus-visible:ring-2 focus-visible:ring-border-normal"
                           >
+                            {/* Hovered, the word and its chevron each go a
+                                token lighter. */}
                             {monthYear(currentMonthYear, activeView)}
                             <ChevronDownIcon
                               className={cn(
-                                "size-4 text-[color:var(--ec-ink-gray-5)] transition-transform",
+                                "size-4 text-[color:var(--ec-ink-gray-5)] transition-[color,rotate] group-hover:text-[color:var(--ec-ink-gray-4)]",
                                 switcherOpen && "rotate-180"
                               )}
                             />
@@ -608,10 +685,16 @@ export default function EventPage() {
                           if (value.startsWith("Agenda")) parkAgenda()
                         }}
                       >
-                        <TabsList size="sm">
+                        {/* The playground's switcher: 13px labels, 4 between
+                            the tabs. */}
+                        <TabsList size="sm" className="gap-1">
                           <TabsIndicator />
                           {views.map(({ label, value, Icon }) => (
-                            <TabsTrigger key={value} value={value}>
+                            <TabsTrigger
+                              key={value}
+                              value={value}
+                              className="text-[13px] leading-[16.1px]! tracking-[0.02em]"
+                            >
                               <Icon className="size-4 shrink-0" />
                               {label}
                             </TabsTrigger>
@@ -754,7 +837,7 @@ export default function EventPage() {
           {carried.ghost ? (
             <div
               aria-hidden="true"
-              className="ec-scope pointer-events-none fixed z-[25] opacity-40"
+              className="ec-scope pointer-events-none fixed z-[25] opacity-40 [&>.event]:!mx-0"
               style={{
                 left: carried.ghost.rect.left,
                 top: carried.ghost.rect.top,
@@ -767,12 +850,15 @@ export default function EventPage() {
 
           {/* …and the card itself, in hand: in its hover fill while it is
               held — a copy never takes :hover — easing back to the resting
-              fill on its way to the slot. */}
+              fill on its way to the slot. `!mx-0`: the copy is placed by the
+              card's own box, and the card's 1px side margins pushed it a
+              pixel right of its frame, where the shadow showed a white line
+              down the card's left side. */}
           {heldCard ? (
             <div
               aria-hidden="true"
               className={cn(
-                "ec-scope pointer-events-none fixed z-30 rounded-[8px] shadow-md",
+                "ec-scope pointer-events-none fixed z-30 rounded-[8px] shadow-md [&>.event]:!mx-0",
                 heldLanding
                   ? "transition-all duration-[180ms] ease-out"
                   : "[&>.event]:![background-color:var(--bg-active)]"

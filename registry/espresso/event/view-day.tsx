@@ -3,11 +3,12 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { useEventContext } from "./context"
 import { EventGridPill } from "./grid-pill"
 import { EventTimeMarker } from "./time-marker"
 import { useEventData, useHourGrid } from "./hooks"
-import { parseDate } from "./utils"
+import { MORE_BUTTON_CLASS, parseDate } from "./utils"
 import { PILL_INSET, PILL_MARGIN, eventDays } from "./span"
 import type { CalendarEvent, EventConfig } from "./types"
 
@@ -93,11 +94,18 @@ export function EventDaily({
 
   const dayKey = parseDate(currentDate)
   const eventsKey = dayFullDayEvents.map((e) => e.id).join("|")
+  // Another day, or other events on it: fold the lane and measure again. Not
+  // on mount — the lane is already measuring, and setting it again there
+  // landed after the first measure had finished, leaving it measuring for
+  // good with "+0 more" in an empty lane.
+  const laneKey = `${dayKey}/${eventsKey}`
+  const measuredKey = React.useRef(laneKey)
   React.useEffect(() => {
+    if (measuredKey.current === laneKey) return
+    measuredKey.current = laneKey
     setCollapsed(true)
     setMeasuring(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dayKey, eventsKey])
+  }, [laneKey])
 
   React.useLayoutEffect(() => {
     if (measuring) measureLane()
@@ -137,7 +145,7 @@ export function EventDaily({
         )}
       >
         <div className="flex w-[72px] shrink-0 justify-center border-r border-[color:var(--ec-outline-gray-1)] pt-1 pl-px">
-          <div className="ml-auto mr-[9px] inline-flex h-7 items-center text-[12px] font-[420] text-[color:var(--ec-ink-gray-8)]">
+          <div className="ml-auto mr-[9px] inline-flex leading-[18px] h-7 items-center text-[12px] font-[420] text-[color:var(--ec-ink-gray-8)]">
             All day
           </div>
         </div>
@@ -163,17 +171,21 @@ export function EventDaily({
             />
           ))}
           {hiddenFullDayEvents || measuring ? (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="xs"
               data-all-day-more=""
-              className="mx-px h-auto min-h-7 w-fit shrink-0 cursor-pointer self-stretch rounded-[8px] border border-dashed border-[color:var(--ec-outline-gray-1)] px-2 text-[12px] text-[color:var(--ec-ink-gray-6)]"
+              className={cn(
+                MORE_BUTTON_CLASS,
+                "mx-px min-h-7 w-fit shrink-0 self-stretch px-2"
+              )}
               onClick={(e) => {
                 e.stopPropagation()
                 setCollapsed(false)
               }}
             >
               {`+${hiddenFullDayEvents || dayFullDayEvents.length} more`}
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>

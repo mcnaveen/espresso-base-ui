@@ -3,10 +3,11 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
 import { useEventContext } from "./context"
 import { EventMonthPill } from "./month-pill"
 import { useNow, useStripScroll } from "./hooks"
-import { daysList, parseDate } from "./utils"
+import { MORE_BUTTON_CLASS, daysList, parseDate } from "./utils"
 import {
   COLUMN_INSET,
   COLUMN_RULE,
@@ -111,14 +112,17 @@ export function EventMonthly({
       const room = Math.max(cellCapacity - lanes, 0)
       if (!hiddenBars && days.length <= room)
         return { shown: days, hidden: 0, lanes }
-      const shown = Math.max(room - 1, 0)
+      // Wide, a cell keeps its three and says how many more on a line of its
+      // own under them — the week's floor has room for it — so six events
+      // read as three and "3 more". Narrow, the count takes one of the rows.
+      const shown = isNarrow ? Math.max(room - 1, 0) : room
       return {
         shown: days.slice(0, shown),
         hidden: days.length - shown + hiddenBars,
         lanes,
       }
     },
-    [cellCapacity]
+    [cellCapacity, isNarrow]
   )
 
   const laidOut = React.useMemo(
@@ -320,12 +324,30 @@ export function EventMonthly({
                         />
                       ))}
                       {row.cells[col].hidden ? (
-                        <div
-                          className="flex h-7 items-center px-1.5 text-[12px] text-[color:var(--ec-ink-gray-7)]"
-                          style={{ height: `${laneHeight}px` }}
-                        >
-                          {row.cells[col].hidden} more
-                        </div>
+                        isNarrow ? (
+                          // Narrow, the count alone — "more" truncated to an
+                          // ellipsis in a column this tight — and the way to
+                          // the day, where the whole of it fits.
+                          <Button
+                            variant="ghost"
+                            size="xs"
+                            className={cn(MORE_BUTTON_CLASS, "w-full px-0")}
+                            style={{ height: `${laneHeight}px` }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              openDay(date)
+                            }}
+                          >
+                            {`+${row.cells[col].hidden}`}
+                          </Button>
+                        ) : (
+                          <div
+                            className="flex h-7 items-center px-1.5 text-[12px] text-[color:var(--ec-ink-gray-7)]"
+                            style={{ height: `${laneHeight}px` }}
+                          >
+                            {row.cells[col].hidden} more
+                          </div>
+                        )
                       ) : null}
                     </div>
                   ) : null}

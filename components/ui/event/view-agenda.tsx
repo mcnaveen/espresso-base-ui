@@ -133,7 +133,7 @@ function EventAgendaRow({
           )}
         >
           {!narrow && (
-            <span className="calendar-row-time w-[132px] shrink-0 text-[12px] whitespace-nowrap tabular-nums text-[color:var(--ec-ink-gray-7)]">
+            <span className="calendar-row-time w-[132px] shrink-0 text-[12px]/[1.35] whitespace-nowrap tabular-nums text-[color:var(--ec-ink-gray-7)]">
               {timeLabel}
             </span>
           )}
@@ -150,10 +150,13 @@ function EventAgendaRow({
             >
               <span
                 className={cn(
-                  "calendar-row-title truncate leading-5",
+                  // The size carries its own 20px line: a bare `leading-5`
+                  // beside it is merged away, and 13px on a 14.95 line box
+                  // let truncate slice the descender off a g or a y.
+                  "calendar-row-title truncate",
                   narrow
-                    ? "min-w-0 text-[14px] font-medium"
-                    : "shrink-0 text-[13px] font-medium",
+                    ? "min-w-0 text-[14px]/5 font-medium"
+                    : "shrink-0 text-[13px]/5 font-medium",
                   event.isDeclined &&
                     "text-[color:var(--ec-ink-gray-5)]! line-through"
                 )}
@@ -368,8 +371,8 @@ export function EventAgenda({
                   <span
                     className={cn(
                       isNarrow
-                        ? "text-[13px] text-[color:var(--ec-ink-gray-5)]"
-                        : "text-[12px] text-[color:var(--ec-ink-gray-4)]"
+                        ? "text-[13px] font-[420] text-[color:var(--ec-ink-gray-5)]"
+                        : "text-[12px] font-[420] text-[color:var(--ec-ink-gray-4)]"
                     )}
                   >
                     {agendaRangeLabel(week.start, week.end)}
@@ -411,10 +414,10 @@ export function EventAgenda({
                     >
                       <span
                         className={cn(
-                          "shrink-0 leading-5 text-[color:var(--ec-ink-gray-8)]",
+                          "shrink-0 text-[color:var(--ec-ink-gray-8)]",
                           isNarrow
-                            ? "text-[14px] font-medium"
-                            : "text-[13px] font-medium"
+                            ? "text-[14px]/5 font-medium"
+                            : "text-[13px]/5 font-medium"
                         )}
                       >
                         {slots.agendaDayLabel

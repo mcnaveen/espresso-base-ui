@@ -364,19 +364,39 @@ const CSS = `
   .rte-details
   summary:has(> .ProseMirror-trailingBreak:only-child)::before {
   content: 'Toggle';
-  float: left;
-  height: 0;
   font-weight: 400;
-  color: var(--card-foreground);
-  pointer-events: none;
 }
 .rte:not(.is-readonly)
   .rte-details
   [data-type='details-content']
   > p:only-child:has(> .ProseMirror-trailingBreak:only-child)::before {
   content: 'Empty toggle. Click or drop blocks inside.';
-  float: left;
-  height: 0;
+}
+/* both on one line over the empty one, cut short with an ellipsis where
+   the toggle is narrow — laid over it, so the caret keeps its place */
+.rte:not(.is-readonly)
+  .rte-details
+  summary:has(> .ProseMirror-trailingBreak:only-child),
+.rte:not(.is-readonly)
+  .rte-details
+  [data-type='details-content']
+  > p:only-child:has(> .ProseMirror-trailingBreak:only-child) {
+  position: relative;
+}
+.rte:not(.is-readonly)
+  .rte-details
+  summary:has(> .ProseMirror-trailingBreak:only-child)::before,
+.rte:not(.is-readonly)
+  .rte-details
+  [data-type='details-content']
+  > p:only-child:has(> .ProseMirror-trailingBreak:only-child)::before {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  padding: inherit;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--card-foreground);
   pointer-events: none;
 }
@@ -730,6 +750,13 @@ ${cellTintRules}
   max-width: 100%;
 }
 .rte-doc [data-type='columns'][data-media='true'] .rte-media > div:not([data-sized]) {
+  width: 100% !important;
+}
+
+/* in a column of a layout, a picture not resized fills the column's width,
+   however narrow its file; one resized keeps the width it was given */
+.rte-doc [data-type='column'] .rte-media > div:not([data-sized]),
+.rte-doc [data-type='column'] .rte-media > div:not([data-sized]) img {
   width: 100% !important;
 }
 

@@ -353,3 +353,11 @@ export function isTargetEditable(e: KeyboardEvent): boolean {
     target.isContentEditable
   )
 }
+
+/**
+ * The "+N more" control's look on our ghost `Button`: dashed where the events
+ * are filled, so it reads as a control standing in for what is not drawn, at
+ * the events' 8px corner and 12px type.
+ */
+export const MORE_BUTTON_CLASS =
+  "h-auto cursor-pointer rounded-[8px] border border-dashed border-[color:var(--ec-outline-gray-1)] text-[12px] tracking-[0.02em] text-[color:var(--ec-ink-gray-6)]"

@@ -1174,6 +1174,10 @@ const ALIGN_OPTIONS = [
 ] as const
 
 const MEDIA_MIN = 50
+/** how tall a clipped picture stands: past it, it is cropped to fill */
+const MEDIA_CLIP_HEIGHT = 480
+/** a picture clipped or let out glides to its new height */
+const MEDIA_CLIP_MS = 300
 // the most a pull past the bound stretches the picture, however far it goes
 const MEDIA_STRETCH = 36
 const MEDIA_SPRING_MS = 320
@@ -1186,13 +1190,25 @@ const stretch = (over: number, limit: number) =>
 const reducedMotion = () =>
   window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
+/** a picture's height over its width, from the file itself: a clipped
+ * picture's box is cut short of it */
+const aspectOf = (el: HTMLImageElement | null) =>
+  el?.naturalWidth
+    ? el.naturalHeight / el.naturalWidth
+    : el?.offsetWidth
+      ? el.offsetHeight / el.offsetWidth
+      : 1
+
 export function ImageView(props: NodeViewProps) {
-  const { node, editor, selected, getPos, updateAttributes, deleteNode } =
-    props
+  const { node, editor, getPos, updateAttributes, deleteNode } = props
   const editable = editor.isEditable
   const src = (node.attrs.src as string) || ""
   const align = (node.attrs.align as string | null) ?? "center"
   const width = node.attrs.width as number | null
+  const clip = node.attrs.clip !== false
+  // the file's own width: a clipped picture keeps it (or the room it
+  // stands in) rather than narrowing to keep its shape under the cap
+  const [natural, setNatural] = React.useState<number | null>(null)
   const [menuOpen, setMenuOpen] = React.useState(false)
   // the user's explicit caption toggle; null means "use the default": a
   // caption shows only once one is written, Caption in the menu adds one
@@ -1250,7 +1266,7 @@ export function ImageView(props: NodeViewProps) {
     const box = boxRef.current
     const startX = event.clientX
     const startWidth = el.offsetWidth
-    const aspect = el.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
+    const aspect = aspectOf(el)
     // the picture grows to the room it stands in — its column, its cell, or
     // the page — and no further
     const maxWidth =
@@ -1286,7 +1302,10 @@ export function ImageView(props: NodeViewProps) {
       document.body.classList.remove("rte-media-resizing")
       const w = Math.max(MEDIA_MIN, Math.min(raw, maxWidth))
       const settle = () => {
-        if (box) box.style.maxWidth = ""
+        if (box) {
+          box.style.maxWidth = ""
+          box.removeAttribute("data-resizing")
+        }
         commitSize(w, w * aspect)
         requestAnimationFrame(() => {
           el.style.width = ""
@@ -1308,6 +1327,7 @@ export function ImageView(props: NodeViewProps) {
       box.addEventListener("transitionend", end, { once: true })
       window.setTimeout(end, MEDIA_SPRING_MS + 60)
     }
+    box?.setAttribute("data-resizing", "")
     document.body.classList.add("rte-media-resizing")
     window.addEventListener("pointermove", onMove)
     window.addEventListener("pointerup", onUp)
@@ -1317,7 +1337,7 @@ export function ImageView(props: NodeViewProps) {
   const resizeBy = (delta: number) => {
     const el = imgRef.current
     const current = width || el?.offsetWidth || 320
-    const aspect = el?.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
+    const aspect = aspectOf(el)
     const w = Math.max(MEDIA_MIN, current + delta)
     commitSize(w, w * aspect)
   }
@@ -1326,7 +1346,7 @@ export function ImageView(props: NodeViewProps) {
     const el = imgRef.current
     const available =
       boxRef.current?.parentElement?.clientWidth || el?.offsetWidth || 320
-    const aspect = el?.offsetWidth ? el.offsetHeight / el.offsetWidth : 1
+    const aspect = aspectOf(el)
     const w = Math.max(50, Math.round(available * fraction))
     commitSize(w, w * aspect)
   }
@@ -1338,6 +1358,26 @@ export function ImageView(props: NodeViewProps) {
     const live = editor.state.doc.nodeAt(pos)
     if (!live) return
     editor.view.dispatch(editor.state.tr.insert(pos + live.nodeSize, live))
+  }
+  // Clip on or off: the picture's real height glides from the one to the
+  // other, so the blocks after it move with it. It is cropped to fill the
+  // whole way, the file's shape never squashed while it changes.
+  const toggleClip = () => {
+    const el = imgRef.current
+    updateAttributes({ clip: !clip })
+    if (!el || reducedMotion()) return
+    const box = el.getBoundingClientRect()
+    const whole = box.width * aspectOf(el)
+    const to = clip ? whole : Math.min(whole, MEDIA_CLIP_HEIGHT)
+    if (Math.abs(to - box.height) < 1) return
+    const frame = { maxHeight: "none", objectFit: "cover" }
+    el.animate(
+      [
+        { ...frame, height: `${box.height}px` },
+        { ...frame, height: `${to}px` },
+      ],
+      { duration: MEDIA_CLIP_MS, easing: "cubic-bezier(0.2, 0, 0, 1)" }
+    )
   }
   const toggleCaption = () => {
     const next = !showCaption
@@ -1353,7 +1393,7 @@ export function ImageView(props: NodeViewProps) {
     updateAttributes({ caption: caption || null })
   }
 
-  const chromeVisible = (selected || menuOpen) && editable
+  const chromeVisible = menuOpen && editable
   const menuItem = (
     label: string,
     run: () => void,
@@ -1370,13 +1410,10 @@ export function ImageView(props: NodeViewProps) {
       <div
         ref={boxRef}
         className={cn(
-          "group relative isolate block max-w-full overflow-hidden rounded-lg",
+          "group/image relative isolate block max-w-full overflow-hidden rounded-lg",
           align === "center" && "mx-auto",
           align === "right" && "mr-0 ml-auto",
-          align === "left" && "mr-auto ml-0",
-          // the design's picture ring: a 1px ink-gray-6 line 4px outside
-          selected &&
-            "ring-1 ring-[color:var(--muted-foreground)] ring-offset-4 ring-offset-[var(--background)]"
+          align === "left" && "mr-auto ml-0"
         )}
         style={{ width: width ? `${width}px` : "auto" }}
         data-sized={width ? "" : undefined}
@@ -1385,7 +1422,17 @@ export function ImageView(props: NodeViewProps) {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             ref={imgRef}
-            className="rounded-lg"
+            className={cn("rounded-lg", clip && "object-cover")}
+            style={
+              clip
+                ? {
+                    maxHeight: MEDIA_CLIP_HEIGHT,
+                    width:
+                      !width && natural ? `min(100%, ${natural}px)` : undefined,
+                  }
+                : undefined
+            }
+            onLoad={(e) => setNatural(e.currentTarget.naturalWidth || null)}
             src={src}
             alt={(node.attrs.alt as string) || ""}
             width={width ?? undefined}
@@ -1400,7 +1447,11 @@ export function ImageView(props: NodeViewProps) {
           <div
             className={cn(
               "absolute top-2.5 right-2.5 z-20 items-center gap-1.5",
-              chromeVisible ? "flex" : "hidden"
+              chromeVisible
+                ? "flex"
+                : editable
+                  ? "hidden group-hover/image:flex group-data-resizing/image:flex"
+                  : "hidden"
             )}
           >
             <DropdownMenu
@@ -1428,6 +1479,7 @@ export function ImageView(props: NodeViewProps) {
               <DropdownMenuContent align="end" sideOffset={4}>
                 <DropdownMenuGroup>
                   {menuItem("Caption", toggleCaption, showCaption)}
+                  {menuItem("Clip", toggleClip, clip)}
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
@@ -1476,15 +1528,17 @@ export function ImageView(props: NodeViewProps) {
             </DropdownMenu>
           </div>
 
-          {/* the design's edge pills, the hand's target 14px deep */}
-          {selected && editable && (
+          {/* the design's edge pills, the hand's target 14px deep: they
+              show while the pointer is on the picture, and stay through a
+              resize the pointer has carried off it */}
+          {editable && (
             <>
               {(["left", "right"] as const).map((edge) => (
                 <button
                   key={edge}
                   type="button"
                   className={cn(
-                    "absolute top-1/2 z-30 flex h-[66px] max-h-[50%] w-3.5 -translate-y-1/2 cursor-ew-resize touch-none items-center bg-transparent",
+                    "absolute top-1/2 z-30 hidden h-[66px] max-h-[50%] w-3.5 -translate-y-1/2 cursor-ew-resize touch-none items-center bg-transparent group-hover/image:flex group-data-resizing/image:flex",
                     edge === "left"
                       ? "left-0 justify-start pl-1"
                       : "right-0 justify-end pr-1"
@@ -1618,7 +1672,7 @@ function browserSrcOf(node: NodeViewProps["node"]): string {
 }
 
 export function EmbedView(props: NodeViewProps) {
-  const { node, editor, selected, getPos, updateAttributes } = props
+  const { node, editor, getPos, updateAttributes } = props
   const editable = editor.isEditable
   const src = (node.attrs.src as string) || ""
   const frameSrc = frameSrcOf(node)
@@ -1704,12 +1758,14 @@ export function EmbedView(props: NodeViewProps) {
       window.removeEventListener("pointerup", onUp)
       window.removeEventListener("pointercancel", onUp)
       document.body.classList.remove("rte-media-resizing")
+      box.removeAttribute("data-resizing")
       commitWidth(box.offsetWidth)
     }
     window.addEventListener("pointermove", onMove)
     window.addEventListener("pointerup", onUp)
     window.addEventListener("pointercancel", onUp)
     // the class carries the resize cursor over the whole page
+    box.setAttribute("data-resizing", "")
     document.body.classList.add("rte-media-resizing")
   }
   const resizeBy = (target: EventTarget | null, delta: number) => {
@@ -1749,7 +1805,7 @@ export function EmbedView(props: NodeViewProps) {
     updateAttributes({ title: caption || null })
   }
 
-  const chromeVisible = (selected || menuOpen) && editable
+  const chromeVisible = menuOpen && editable
   const item = (
     Icon: React.ComponentType<{ className?: string }>,
     label: string,
@@ -1781,10 +1837,7 @@ export function EmbedView(props: NodeViewProps) {
           "relative isolate block max-w-full rounded-lg",
           align === "center" && "mx-auto",
           align === "right" && "mr-0 ml-auto",
-          align === "left" && "mr-auto ml-0",
-          // the picture's ring: a 1px ink-gray-6 line 4px outside
-          selected &&
-            "ring-1 ring-[color:var(--muted-foreground)] ring-offset-4 ring-offset-[var(--background)]"
+          align === "left" && "mr-auto ml-0"
         )}
         style={{ width: width ? `${width}px` : "100%" }}
         data-sized={width ? "" : undefined}
@@ -1841,7 +1894,7 @@ export function EmbedView(props: NodeViewProps) {
           )}
 
           {/* the media chrome: the pencil, then everything behind ⋯ */}
-          {/* the chrome comes with the pointer, and stays while chosen */}
+          {/* the chrome comes with the pointer, and stays while its menu is open */}
           <div
             className={cn(
               "absolute top-2.5 right-2.5 z-20 items-center gap-1.5",
@@ -1934,7 +1987,8 @@ export function EmbedView(props: NodeViewProps) {
                     edge === "left"
                       ? "left-0 justify-start pl-1"
                       : "right-0 justify-end pr-1",
-                    selected ? "flex" : "hidden group-hover/embed:flex"
+                    // with the pointer, and through a resize carried off it
+                    "hidden group-hover/embed:flex [[data-resizing]_&]:flex"
                   )}
                   aria-label={`Resize embed from ${edge} edge`}
                   {...pressHandlers((e) => startResize(e, edge))}
@@ -2078,8 +2132,7 @@ function usePlayableSrc(src: string): string | undefined {
 }
 
 export function VideoView(props: NodeViewProps) {
-  const { node, editor, selected, getPos, updateAttributes, deleteNode } =
-    props
+  const { node, editor, getPos, updateAttributes, deleteNode } = props
   const editable = editor.isEditable
   const src = (node.attrs.src as string) || ""
   const playable = usePlayableSrc(src)
@@ -2144,11 +2197,13 @@ export function VideoView(props: NodeViewProps) {
       window.removeEventListener("pointerup", onUp)
       window.removeEventListener("pointercancel", onUp)
       document.body.classList.remove("rte-media-resizing")
+      box.removeAttribute("data-resizing")
       commitWidth(box.offsetWidth)
     }
     window.addEventListener("pointermove", onMove)
     window.addEventListener("pointerup", onUp)
     window.addEventListener("pointercancel", onUp)
+    box.setAttribute("data-resizing", "")
     document.body.classList.add("rte-media-resizing")
   }
   const resizeBy = (target: EventTarget | null, delta: number) => {
@@ -2186,7 +2241,7 @@ export function VideoView(props: NodeViewProps) {
     updateAttributes({ caption: caption || null })
   }
 
-  const chromeVisible = (selected || menuOpen) && editable
+  const chromeVisible = menuOpen && editable
   const item = (
     Icon: React.ComponentType<{ className?: string }>,
     label: string,
@@ -2208,9 +2263,7 @@ export function VideoView(props: NodeViewProps) {
           "relative isolate block max-w-full rounded-lg",
           align === "center" && "mx-auto",
           align === "right" && "mr-0 ml-auto",
-          align === "left" && "mr-auto ml-0",
-          selected &&
-            "ring-1 ring-[color:var(--muted-foreground)] ring-offset-4 ring-offset-[var(--background)]"
+          align === "left" && "mr-auto ml-0"
         )}
         style={{ width: width ? `${width}px` : "100%" }}
         data-sized={width ? "" : undefined}
@@ -2229,7 +2282,7 @@ export function VideoView(props: NodeViewProps) {
             loop={loop}
             muted={muted}
           />
-          {/* the chrome comes with the pointer, and stays while chosen */}
+          {/* the chrome comes with the pointer, and stays while its menu is open */}
           <div
             className={cn(
               "absolute top-2.5 right-2.5 z-20 items-center gap-1.5",
@@ -2322,7 +2375,7 @@ export function VideoView(props: NodeViewProps) {
                     edge === "left"
                       ? "left-0 justify-start pl-1"
                       : "right-0 justify-end pr-1",
-                    selected ? "flex" : "hidden group-hover/video:flex"
+                    "hidden group-hover/video:flex [[data-resizing]_&]:flex"
                   )}
                   aria-label={`Resize video from ${edge} edge`}
                   {...pressHandlers((e) => startResize(e, edge))}

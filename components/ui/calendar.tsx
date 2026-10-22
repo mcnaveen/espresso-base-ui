@@ -62,7 +62,7 @@ function Calendar({
           defaultClassNames.month
         ),
         nav: cn(
-          "absolute inset-x-0 top-0 flex w-full items-center gap-1",
+          "absolute inset-x-0 top-0 flex w-full items-center gap-0",
           // multi-month: prev sits at the far left corner, next at the far
           // right; single month keeps both grouped at the right
           (props.numberOfMonths ?? 1) > 1 ? "justify-between" : "justify-end",
@@ -70,12 +70,12 @@ function Calendar({
         ),
         button_previous: cn(
           buttonVariants({ variant: buttonVariant }),
-          "size-(--cell-size) p-0 select-none aria-disabled:opacity-50",
+          "h-(--cell-size) w-[calc(var(--cell-size)-2px)] rounded-md p-0 text-secondary-foreground select-none hover:bg-muted dark:hover:bg-muted aria-disabled:opacity-50 [&>svg]:size-3.5",
           defaultClassNames.button_previous
         ),
         button_next: cn(
           buttonVariants({ variant: buttonVariant }),
-          "size-(--cell-size) p-0 select-none aria-disabled:opacity-50",
+          "h-(--cell-size) w-[calc(var(--cell-size)-2px)] rounded-md p-0 text-secondary-foreground select-none hover:bg-muted dark:hover:bg-muted aria-disabled:opacity-50 [&>svg]:size-3.5",
           defaultClassNames.button_next
         ),
         month_caption: cn(
@@ -99,8 +99,8 @@ function Calendar({
           "font-medium select-none",
           (props.numberOfMonths ?? 1) > 1 ? "pl-0" : "pl-1.5",
           captionLayout === "label"
-            ? "text-sm"
-            : "flex items-center gap-1 rounded-(--cell-radius) text-sm [&>svg]:size-3.5 [&>svg]:text-muted-foreground",
+            ? "text-sm tracking-[0.02em]"
+            : "flex items-center gap-1 rounded-(--cell-radius) text-sm tracking-[0.02em] [&>svg]:size-3.5 [&>svg]:text-muted-foreground",
           defaultClassNames.caption_label
         ),
         table: "border-collapse",
@@ -110,7 +110,7 @@ function Calendar({
           defaultClassNames.weekdays
         ),
         weekday: cn(
-          "flex size-(--cell-size) items-center justify-center rounded-(--cell-radius) text-xs leading-base font-normal tracking-normal text-card-foreground select-none",
+          "flex size-(--cell-size) items-center justify-center rounded-(--cell-radius) text-xs leading-base font-normal tracking-[0.02em] text-card-foreground select-none",
           defaultClassNames.weekday
         ),
         week: cn(
@@ -131,24 +131,24 @@ function Calendar({
           defaultClassNames.day
         ),
         range_start: cn(
-          "rounded-l-(--cell-radius) rounded-r-none bg-muted",
+          "rounded-l-(--cell-radius) rounded-r-none bg-input dark:bg-secondary",
           defaultClassNames.range_start
         ),
-        range_middle: cn("bg-muted", defaultClassNames.range_middle),
+        range_middle: cn("bg-input dark:bg-secondary", defaultClassNames.range_middle),
         range_end: cn(
-          "rounded-l-none rounded-r-(--cell-radius) bg-muted",
+          "rounded-l-none rounded-r-(--cell-radius) bg-input dark:bg-secondary",
           defaultClassNames.range_end
         ),
         today: cn(
-          "rounded-(--cell-radius) [&_button:not([data-selected-single=true])]:bg-muted [&_button:not([data-selected-single=true])]:text-foreground [&_button[data-selected-single=true]]:bg-primary [&_button[data-selected-single=true]]:text-primary-foreground",
+          "rounded-(--cell-radius) [&_button:not([data-selected-single=true]):not([data-range-start=true]):not([data-range-end=true])]:text-secondary-foreground [&_button:not([data-selected-single=true]):not([data-range-start=true]):not([data-range-end=true])]:shadow-[inset_0_0_0_1px_var(--muted-foreground)]",
           defaultClassNames.today
         ),
         outside: cn(
-          "[&_button]:text-card-foreground! aria-selected:[&_button]:text-foreground/50! [&_button[data-range-end=true]]:text-primary-foreground! [&_button[data-range-start=true]]:text-primary-foreground! [&_button[data-selected-single=true]]:text-primary-foreground!",
+          "[&_button]:text-card-foreground! aria-selected:[&_button]:text-foreground/50! [&_button[data-range-end=true]]:text-background! [&_button[data-range-start=true]]:text-background! [&_button[data-selected-single=true]]:text-background!",
           defaultClassNames.outside
         ),
         disabled: cn(
-          "text-muted-foreground opacity-50",
+          "[&_button]:text-border-normal! [&_button]:opacity-100",
           defaultClassNames.disabled
         ),
         hidden: cn("invisible", defaultClassNames.hidden),
@@ -232,17 +232,17 @@ function CalendarDayButton({
       data-range-end={modifiers.range_end}
       data-range-middle={modifiers.range_middle}
       className={cn(
-        "relative isolate z-10 flex h-[var(--cell-size)]! w-[var(--cell-size)]! flex-col gap-1 rounded-(--cell-radius) border-0 text-xs leading-base font-normal tracking-normal focus-visible:relative focus-visible:z-10 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "relative isolate z-10 flex h-[var(--cell-size)]! w-[var(--cell-size)]! flex-col gap-1 rounded-(--cell-radius) border-0 text-xs leading-base font-normal tracking-[0.02em] hover:bg-muted dark:hover:bg-muted focus-visible:relative focus-visible:z-10 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
         // range start
-        "data-[range-start=true]:rounded-(--cell-radius) data-[range-start=true]:bg-primary data-[range-start=true]:text-primary-foreground data-[range-start=true]:hover:bg-primary!",
-        "data-[range-start=true]:after:absolute data-[range-start=true]:after:top-0 data-[range-start=true]:after:-right-0.5 data-[range-start=true]:after:bottom-0 data-[range-start=true]:after:-z-10 data-[range-start=true]:after:w-0.5 data-[range-start=true]:after:bg-muted data-[range-start=true]:after:content-['']",
+        "data-[range-start=true]:rounded-(--cell-radius) data-[range-start=true]:bg-secondary-foreground data-[range-start=true]:text-background data-[range-start=true]:hover:bg-secondary-foreground! dark:data-[range-start=true]:bg-foreground dark:data-[range-start=true]:hover:bg-foreground!",
+        "data-[range-start=true]:after:absolute data-[range-start=true]:after:top-0 data-[range-start=true]:after:-right-0.5 data-[range-start=true]:after:bottom-0 data-[range-start=true]:after:-z-10 data-[range-start=true]:after:w-0.5 data-[range-start=true]:after:bg-input dark:data-[range-start=true]:after:bg-secondary data-[range-start=true]:after:content-['']",
         // range middle
-        "data-[range-middle=true]:rounded-none data-[range-middle=true]:bg-muted data-[range-middle=true]:text-foreground data-[range-middle=true]:hover:bg-muted!",
-        "data-[range-middle=true]:before:absolute data-[range-middle=true]:before:top-0 data-[range-middle=true]:before:bottom-0 data-[range-middle=true]:before:-left-0.5 data-[range-middle=true]:before:-z-10 data-[range-middle=true]:before:w-0.5 data-[range-middle=true]:before:bg-muted data-[range-middle=true]:before:content-['']",
-        "data-[range-middle=true]:after:absolute data-[range-middle=true]:after:top-0 data-[range-middle=true]:after:-right-0.5 data-[range-middle=true]:after:bottom-0 data-[range-middle=true]:after:-z-10 data-[range-middle=true]:after:w-0.5 data-[range-middle=true]:after:bg-muted data-[range-middle=true]:after:content-['']",
+        "data-[range-middle=true]:rounded-none data-[range-middle=true]:bg-input data-[range-middle=true]:text-secondary-foreground data-[range-middle=true]:hover:bg-input! dark:data-[range-middle=true]:bg-secondary dark:data-[range-middle=true]:hover:bg-secondary!",
+        "data-[range-middle=true]:before:absolute data-[range-middle=true]:before:top-0 data-[range-middle=true]:before:bottom-0 data-[range-middle=true]:before:-left-0.5 data-[range-middle=true]:before:-z-10 data-[range-middle=true]:before:w-0.5 data-[range-middle=true]:before:bg-input dark:data-[range-middle=true]:before:bg-secondary data-[range-middle=true]:before:content-['']",
+        "data-[range-middle=true]:after:absolute data-[range-middle=true]:after:top-0 data-[range-middle=true]:after:-right-0.5 data-[range-middle=true]:after:bottom-0 data-[range-middle=true]:after:-z-10 data-[range-middle=true]:after:w-0.5 data-[range-middle=true]:after:bg-input dark:data-[range-middle=true]:after:bg-secondary data-[range-middle=true]:after:content-['']",
         // range end
-        "data-[range-end=true]:rounded-(--cell-radius) data-[range-end=true]:bg-primary data-[range-end=true]:text-primary-foreground data-[range-end=true]:hover:bg-primary!",
-        "data-[range-end=true]:before:absolute data-[range-end=true]:before:top-0 data-[range-end=true]:before:bottom-0 data-[range-end=true]:before:-left-0.5 data-[range-end=true]:before:-z-10 data-[range-end=true]:before:w-0.5 data-[range-end=true]:before:bg-muted data-[range-end=true]:before:content-['']",
+        "data-[range-end=true]:rounded-(--cell-radius) data-[range-end=true]:bg-secondary-foreground data-[range-end=true]:text-background data-[range-end=true]:hover:bg-secondary-foreground! dark:data-[range-end=true]:bg-foreground dark:data-[range-end=true]:hover:bg-foreground!",
+        "data-[range-end=true]:before:absolute data-[range-end=true]:before:top-0 data-[range-end=true]:before:bottom-0 data-[range-end=true]:before:-left-0.5 data-[range-end=true]:before:-z-10 data-[range-end=true]:before:w-0.5 data-[range-end=true]:before:bg-input dark:data-[range-end=true]:before:bg-secondary data-[range-end=true]:before:content-['']",
         // hide pseudo-element bridges at row edges and round the range edges
         "[:first-child>&]:rounded-l-(--cell-radius) [:first-child>&]:before:hidden",
         "[:last-child>&]:rounded-r-(--cell-radius) [:last-child>&]:after:hidden",
@@ -251,7 +251,7 @@ function CalendarDayButton({
         "[&[data-range-start=true][data-range-end=true]]:before:hidden",
         "[&[data-range-start=true][data-range-end=true]]:after:hidden",
         // single selected
-        "data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground data-[selected-single=true]:hover:bg-primary!",
+        "data-[selected-single=true]:bg-secondary-foreground data-[selected-single=true]:text-background data-[selected-single=true]:hover:bg-secondary-foreground! dark:data-[selected-single=true]:bg-foreground dark:data-[selected-single=true]:hover:bg-foreground!",
         "[&>span]:text-xs [&>span]:opacity-70",
         defaultClassNames.day,
         className
