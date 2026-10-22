@@ -111,14 +111,17 @@ export function EventMonthly({
       const room = Math.max(cellCapacity - lanes, 0)
       if (!hiddenBars && days.length <= room)
         return { shown: days, hidden: 0, lanes }
-      const shown = Math.max(room - 1, 0)
+      // Wide, a cell keeps its three and says how many more on a line of its
+      // own under them — the week's floor has room for it — so six events
+      // read as three and "3 more". Narrow, the count takes one of the rows.
+      const shown = isNarrow ? Math.max(room - 1, 0) : room
       return {
         shown: days.slice(0, shown),
         hidden: days.length - shown + hiddenBars,
         lanes,
       }
     },
-    [cellCapacity]
+    [cellCapacity, isNarrow]
   )
 
   const laidOut = React.useMemo(

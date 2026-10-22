@@ -135,7 +135,7 @@ export function EventWeekly({
         <div className="flex h-fit min-h-[34px] shrink-0 border-b border-[color:var(--ec-outline-gray-1)]">
           <div className="flex w-[72px] shrink-0 justify-center border-r border-[color:var(--ec-outline-gray-1)] pt-1 pl-px">
             <div
-              className="ml-auto mr-[9px] inline-flex items-center text-[12px] font-[420] text-[color:var(--ec-ink-gray-8)]"
+              className="ml-auto mr-[9px] inline-flex leading-[18px] items-center text-[12px] font-[420] text-[color:var(--ec-ink-gray-8)]"
               style={{ height: `${laneHeight}px` }}
             >
               All day

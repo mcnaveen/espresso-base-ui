@@ -714,6 +714,8 @@ export function useMonthResize(
   React.useEffect(() => {
     const el = root.current
     if (!el) return
+    // The strip, for the handlers declared below, where `el`'s check is lost.
+    const strip: HTMLElement = el
 
     const EDGE = 7
     let armed: { bar: HTMLElement; edge: MonthEdge } | null = null
@@ -725,6 +727,19 @@ export function useMonthResize(
     } | null = null
     /** The pulled bar's own fill, which with its title picks out its pieces. */
     let pulledBg = ""
+    /** The span the bar is being drawn over, as of the last step. */
+    let pulledSpan: [string, string] | null = null
+    /**
+     * React draws a step's pieces on its own schedule — often after the frame
+     * a step asked for — and a bar then slides to its new span, so a piece is
+     * judged by where it is mid-slide. The pieces are marked again whenever
+     * the strip changes while the bar is held and whenever a slide ends, or
+     * a piece drawn after the pointer stopped would sit in the resting fill.
+     */
+    let redraws: MutationObserver | null = null
+    const remark = () => {
+      if (pulling && pulledSpan) markPieces(pulledSpan)
+    }
 
     /**
      * Every piece of the bar being pulled, in its hover fill for as long as
@@ -756,19 +771,26 @@ export function useMonthResize(
         else bar.removeAttribute(HELD_BAR)
       }
     }
-    /** Let go of: every piece rests until the pointer next leaves it. */
+    /**
+     * Let go of: every piece rests until the pointer is off the bar — off all
+     * of its pieces, not each in turn, or a week the pointer never went back
+     * to would stay at rest and miss the hover the rest of the bar then shows.
+     */
     function restPieces() {
       for (const bar of root.current?.querySelectorAll<HTMLElement>(
         `[${HELD_BAR}]`
       ) ?? []) {
         bar.removeAttribute(HELD_BAR)
         bar.setAttribute("data-rested", "")
-        bar.addEventListener(
-          "pointerleave",
-          () => bar.removeAttribute("data-rested"),
-          { once: true }
-        )
       }
+      const wake = (e: PointerEvent) => {
+        const on = (e.target as HTMLElement | null)?.closest("[data-rested]")
+        if (on) return
+        for (const bar of root.current?.querySelectorAll("[data-rested]") ?? [])
+          bar.removeAttribute("data-rested")
+        window.removeEventListener("pointermove", wake)
+      }
+      window.addEventListener("pointermove", wake)
     }
 
     function barAt(e: PointerEvent) {
@@ -815,6 +837,7 @@ export function useMonthResize(
         p.edge === "end"
           ? [p.from, date < p.from ? p.from : date]
           : [date > p.to ? p.to : date, p.to]
+      pulledSpan = span
       requestAnimationFrame(() => pulling === p && markPieces(span))
     }
 
@@ -822,8 +845,12 @@ export function useMonthResize(
       window.removeEventListener("pointermove", onPull)
       window.removeEventListener("pointerup", onDrop)
       window.removeEventListener("pointercancel", onDrop)
+      redraws?.disconnect()
+      redraws = null
+      strip.removeEventListener("transitionend", remark)
       if (pulling) restPieces()
       pulling = null
+      pulledSpan = null
       disarm()
     }
 
@@ -866,7 +893,18 @@ export function useMonthResize(
         edge: armed.edge,
       }
       pulledBg = bar.style.getPropertyValue("--bg")
-      markPieces([pulling.from, pulling.to])
+      pulledSpan = [pulling.from, pulling.to]
+      markPieces(pulledSpan)
+      redraws = new MutationObserver(remark)
+      strip.addEventListener("transitionend", remark)
+      // Pieces added and pieces moved; not attributes at large, which the
+      // marking itself writes.
+      redraws.observe(strip, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style"],
+      })
       window.addEventListener("pointermove", onPull)
       window.addEventListener("pointerup", onDrop, { once: true })
       window.addEventListener("pointercancel", onDrop, { once: true })
@@ -880,6 +918,8 @@ export function useMonthResize(
       el.removeEventListener("pointerdown", onPointerDown, true)
       el.removeEventListener("pointerleave", disarm)
       window.removeEventListener("pointermove", onPull)
+      el.removeEventListener("transitionend", remark)
+      redraws?.disconnect()
     }
   }, [root, enabled])
 }

@@ -93,11 +93,18 @@ export function EventDaily({
 
   const dayKey = parseDate(currentDate)
   const eventsKey = dayFullDayEvents.map((e) => e.id).join("|")
+  // Another day, or other events on it: fold the lane and measure again. Not
+  // on mount — the lane is already measuring, and setting it again there
+  // landed after the first measure had finished, leaving it measuring for
+  // good with "+0 more" in an empty lane.
+  const laneKey = `${dayKey}/${eventsKey}`
+  const measuredKey = React.useRef(laneKey)
   React.useEffect(() => {
+    if (measuredKey.current === laneKey) return
+    measuredKey.current = laneKey
     setCollapsed(true)
     setMeasuring(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dayKey, eventsKey])
+  }, [laneKey])
 
   React.useLayoutEffect(() => {
     if (measuring) measureLane()
@@ -137,7 +144,7 @@ export function EventDaily({
         )}
       >
         <div className="flex w-[72px] shrink-0 justify-center border-r border-[color:var(--ec-outline-gray-1)] pt-1 pl-px">
-          <div className="ml-auto mr-[9px] inline-flex h-7 items-center text-[12px] font-[420] text-[color:var(--ec-ink-gray-8)]">
+          <div className="ml-auto mr-[9px] inline-flex leading-[18px] h-7 items-center text-[12px] font-[420] text-[color:var(--ec-ink-gray-8)]">
             All day
           </div>
         </div>

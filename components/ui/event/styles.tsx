@@ -60,7 +60,10 @@ const vars = (theme: "light" | "dark") =>
   TOKENS.map(([n, l, d]) => `--ec-${n}: ${theme === "light" ? l : d};`).join("")
 
 const CSS = `
-.ec-scope { ${vars("light")} }
+/* Every size in the calendar's type scale stands on a line 1.35 of itself
+   (12/16.2, 13/17.55, 14/18.9, 16/21.6); a size set alone takes it from here
+   rather than the page's tighter 1.15. */
+.ec-scope { ${vars("light")} line-height: 1.35; }
 .dark .ec-scope { ${vars("dark")} }
 
 /* ── An event wherever it is drawn: a pill in the grids, a row in the list ── */
@@ -94,9 +97,10 @@ const CSS = `
   right: calc(100% + 10px);
   top: -9px;
   font-size: 12px;
+  line-height: 18px;
   font-weight: 420;
   white-space: nowrap;
-  color: var(--ec-ink-gray-7);
+  color: var(--ec-ink-gray-8);
 }
 
 /* ── Now: the hairline across the week, and today's own line ──────────── */
@@ -134,6 +138,9 @@ const CSS = `
 .ec-scope .calendar-day-header.past > * { opacity: 0.55; }
 .ec-scope .calendar-week-label.past { opacity: 0.55; }
 .ec-scope .calendar-row-description:empty { display: none; }
+/* An event reads as the card it is in the grids: the calendar's own ink on
+   its title, not the page's. */
+.ec-scope .calendar-row .calendar-row-title { color: var(--border); }
 /* While a week label is stuck, the rows going under it fade out. */
 .ec-scope .calendar-week-label[data-stuck]::before {
   content: "";
@@ -166,6 +173,11 @@ const CSS = `
 /* Month's: every week's piece of a bar whose edge is being pulled, and
    each of them resting once it is let go. */
 .ec-scope [data-week-row] .event[data-pulled] {
+  background-color: var(--bg-active) !important;
+}
+/* …and every piece of an event hovered on any one of them — the page marks
+   them. Below the rested rule: a piece just let go of stays at rest. */
+.ec-scope .event[data-hover-group]:not(.active):not([data-rested]) {
   background-color: var(--bg-active) !important;
 }
 .ec-scope [data-week-row] .event[data-rested]:not(.active) {
