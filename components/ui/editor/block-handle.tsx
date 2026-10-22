@@ -49,6 +49,8 @@ const CALLOUT = '[data-type="callout"]'
 const LIST_TYPES = new Set(["bulletList", "orderedList", "taskList"])
 const ITEM_TYPES = new Set(["listItem", "taskItem"])
 const MEDIA_ROW = '[data-type="columns"][data-media="true"]'
+/** a picture, a video, an embed or the audio bar, as its node view draws it */
+const MEDIA_BLOCK = ".rte-media, .rte-player"
 /** a text column's grip: smaller, centred in the half-gutter between the
  * hairline and the text (styles.tsx: a 56px gutter, the line mid-way) */
 const TEXT_GRIP_WIDTH = 12
@@ -713,10 +715,16 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
       setPoint({ top: r.top + CELL_INSET, left: r.left + CELL_INSET })
       return
     }
-    // centred on the block's first line of text, not on the block's box
+    // centred on the block's first line of text, not on the block's box —
+    // a picture, a video or an embed has none of its own (the words of a
+    // frame that failed to load are its chrome): its grip is at its top
+    const mediaBlock =
+      el.matches(MEDIA_BLOCK) || !!el.querySelector(`:scope > ${MEDIA_BLOCK}`)
     const first = el.matches(FIRST_LINE)
       ? el
-      : (el.querySelector(FIRST_LINE) ?? el)
+      : mediaBlock
+        ? el
+        : (el.querySelector(FIRST_LINE) ?? el)
     const box = first.getBoundingClientRect()
     const fcs = getComputedStyle(first)
     // the first line starts inside the block's padding (a code block's)
