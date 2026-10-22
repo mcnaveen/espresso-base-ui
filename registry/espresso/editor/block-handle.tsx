@@ -45,6 +45,7 @@ const SKIP =
   ".ProseMirror-gapcursor, .ProseMirror-widget, .ProseMirror-separator, br"
 const ROW = '[data-type="columns"]'
 const TOGGLE = '[data-type="details"]'
+const CALLOUT = '[data-type="callout"]'
 const LIST_TYPES = new Set(["bulletList", "orderedList", "taskList"])
 const ITEM_TYPES = new Set(["listItem", "taskItem"])
 const MEDIA_ROW = '[data-type="columns"][data-media="true"]'
@@ -168,12 +169,68 @@ function toggleChild(el: HTMLElement, y: number) {
   return nearest
 }
 
+/**
+ * A callout's blocks, as Notion has them: its first line is the callout's
+ * own (its grip carries the callout), the blocks under it each have their
+ * own grip, set in the callout's left padding below the emoji. The block
+ * of a callout the pointer is at — none on its first line.
+ */
+function calloutChild(el: HTMLElement, y: number) {
+  let nearest: HTMLElement | null = null
+  let gap = Infinity
+  for (const child of el.children) {
+    if (!(child instanceof HTMLElement) || child.matches(SKIP)) continue
+    const r = child.getBoundingClientRect()
+    const d = y < r.top ? r.top - y : y >= r.bottom ? y - r.bottom : 0
+    if (d < gap) {
+      gap = d
+      nearest = child
+    }
+  }
+  return nearest && nearest !== calloutTitle(el) ? nearest : null
+}
+const calloutTitle = (el: Element) =>
+  [...el.children].find(
+    (c): c is HTMLElement => c instanceof HTMLElement && !c.matches(SKIP)
+  ) ?? null
+
 /** an empty line, alone in a toggle's body: a block set by it takes its
  * place */
 const loneToggleLine = (el: Element) =>
   el.parentElement?.matches('[data-type="details-content"]') === true &&
   el.parentElement.childElementCount === 1 &&
   isEmptyLine(el)
+
+/**
+ * In a row each cell's own block has the grip, so one block moves on its
+ * own; the row itself answers from the gaps between its cells
+ */
+function rowChild(row: HTMLElement, x: number, y: number, loose: boolean) {
+  // a text row's cell reaches into the gutter on its left, over its
+  // blocks' grip
+  const room = row.matches(MEDIA_ROW) ? 0 : TEXT_GRIP_ROOM
+  const cell = [...row.children].find(
+    (c): c is HTMLElement =>
+      c instanceof HTMLElement &&
+      x >= c.getBoundingClientRect().left - room &&
+      x < c.getBoundingClientRect().right
+  )
+  const blocks = cell
+    ? [...cell.children].filter(
+        (c): c is HTMLElement => c instanceof HTMLElement && !c.matches(SKIP)
+      )
+    : []
+  const inner = blocks.find((c) => spans(c, y))
+  if (inner) return inner
+  // a drop in a short column's empty space below its blocks lands by its
+  // last block, not on the whole row (hovering there still offers the
+  // row's own grip, the one that carries the row)
+  if (loose && blocks.length) {
+    const last = blocks[blocks.length - 1]
+    if (y >= last.getBoundingClientRect().bottom) return last
+  }
+  return null
+}
 
 /** the block under the pointer: a top-level block, or a list's item */
 function blockAt(
@@ -203,37 +260,19 @@ function blockAt(
   }
   if (!el || nearest > REACH) return null
   let block: HTMLElement = el
-  // in a row each cell's own block has the grip, so one block moves on its
-  // own; the row itself answers from the gaps between its cells
-  if (block.matches(ROW)) {
-    // a text row's cell reaches into the gutter on its left, over its
-    // blocks' grip
-    const room = block.matches(MEDIA_ROW) ? 0 : TEXT_GRIP_ROOM
-    const cell = [...block.children].find(
-      (c): c is HTMLElement =>
-        c instanceof HTMLElement &&
-        x >= c.getBoundingClientRect().left - room &&
-        x < c.getBoundingClientRect().right
-    )
-    const blocks = cell
-      ? [...cell.children].filter(
-          (c): c is HTMLElement => c instanceof HTMLElement && !c.matches(SKIP)
-        )
-      : []
-    let inner = blocks.find((c) => spans(c, y))
-    // a drop in a short column's empty space below its blocks lands by its
-    // last block, not on the whole row (hovering there still offers the
-    // row's own grip, the one that carries the row)
-    if (!inner && loose && blocks.length) {
-      const last = blocks[blocks.length - 1]
-      if (y >= last.getBoundingClientRect().bottom) inner = last
-    }
-    if (inner) block = inner
-  }
-  // into an open toggle's body, and a list's items, as deep as they go
+  // into a row's cells, an open toggle's body, a callout's blocks, and a
+  // list's items, as deep as they go
   for (;;) {
-    if (block.matches(TOGGLE)) {
-      const inner = toggleChild(block, y)
+    if (block.matches(ROW)) {
+      const inner = rowChild(block, x, y, loose)
+      if (!inner) break
+      block = inner
+      continue
+    }
+    if (block.matches(TOGGLE) || block.matches(CALLOUT)) {
+      const inner = block.matches(TOGGLE)
+        ? toggleChild(block, y)
+        : calloutChild(block, y)
       if (!inner) break
       block = inner
       continue
@@ -881,6 +920,20 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
             box: new DOMRect(s.left, s.top, s.width, s.height),
           }
       }
+      // the lower half of a callout's first line: into the callout, first
+      // of the blocks under it
+      if (el.matches(CALLOUT)) {
+        const s = calloutTitle(el)?.getBoundingClientRect()
+        if (s && y >= s.top + s.height / 2 && y < s.bottom)
+          return {
+            el,
+            pos,
+            before: false,
+            side: null,
+            into: true,
+            box: new DOMRect(s.left, s.top, s.width, s.height),
+          }
+      }
       const zone = Math.min(SIDE_ZONE, box.width / 4)
       let side: "left" | "right" | null = null
       const run = d.source.run
@@ -936,6 +989,12 @@ export function BlockHandle({ editor }: { editor: TiptapEditor }) {
   ) => {
     const node = state.doc.nodeAt(at.pos)
     if (!node) return null
+    if (at.into && node.type.name === "callout")
+      return {
+        edge: at.pos + 1 + node.firstChild!.nodeSize,
+        lone: null,
+        open: null,
+      }
     if (at.into && node.childCount === 2) {
       const body = node.lastChild!
       const edge = at.pos + 1 + node.firstChild!.nodeSize + 1

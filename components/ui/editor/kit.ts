@@ -158,6 +158,15 @@ export const RichTextKit = Extension.create<RichTextKitOptions>({
                 parseHTML: (el: HTMLElement) =>
                   el.getAttribute("data-caption"),
               },
+              // a tall picture is clipped to a set height unless this is
+              // turned off in its menu, when it shows whole
+              clip: {
+                default: true,
+                parseHTML: (el: HTMLElement) =>
+                  el.getAttribute("data-clip") !== "false",
+                renderHTML: (attrs: Record<string, unknown>) =>
+                  attrs.clip === false ? { "data-clip": "false" } : {},
+              },
             }
           },
           renderHTML({ node, HTMLAttributes }) {
