@@ -513,16 +513,6 @@ function RichTextToolbar({
     </DropdownMenu>
   )
 
-  const imageColumnsItems = (close?: boolean) =>
-    [1, 2, 3].map((n) => (
-      <DropdownMenuItem
-        key={n}
-        onClick={() => chain().insertImageColumns(n).run()}
-      >
-        {n === 1 ? "1 column" : `${n} columns`}
-      </DropdownMenuItem>
-    ))
-
   const [tableMenuOpen, setTableMenuOpen] = React.useState(false)
 
   return (
@@ -1033,31 +1023,18 @@ function RichTextToolbar({
 
         <span className="rte-tb-divider" aria-hidden="true" />
 
-        {/* image: the slot, and the rows of slots */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
+        {/* image: the slot */}
+        <BarTooltip label="Add image">
+          <button
+            type="button"
+            className="rte-btn"
+            aria-label="Add image"
             disabled={disabled}
-            render={
-              <button type="button" className="rte-select" aria-label="Image">
-                <ImageIcon className="size-4" />
-                <SmallDownIcon className="size-4" />
-              </button>
-            }
-          />
-          <DropdownMenuContent align="start" sideOffset={4}>
-            <DropdownMenuItem onClick={() => chain().insertImageSlot().run()}>
-              <ImageIcon className="size-4" /> Add image
-            </DropdownMenuItem>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Grid3Icon className="size-4" /> Image columns
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                {imageColumnsItems()}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            onClick={() => chain().insertImageSlot().run()}
+          >
+            <ImageIcon className="size-4" />
+          </button>
+        </BarTooltip>
         {mediaMenu("Video", VideoIcon, "video", () =>
           videoRef.current?.click()
         )}

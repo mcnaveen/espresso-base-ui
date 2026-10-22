@@ -91,7 +91,7 @@ welcome("jacob@frappe.in")</code></pre>
 <hr>
 <h2>Frappe Team</h2>
 <img src="/images/rte/team-3.jpg" alt="Frappeverse 2023 group photo" data-caption="Image with captions provide context">
-<div data-type="columns" data-count="2" data-media="true"><div data-type="column"><img src="/images/rte/team-1.jpg" alt="Frappeverse talk"></div><div data-type="column"><img src="/images/rte/team-2.jpg" alt="Frappeverse stage"></div></div>
+<div data-type="columns" data-count="2"><div data-type="column"><img src="/images/rte/team-1.jpg" alt="Frappeverse talk"></div><div data-type="column"><img src="/images/rte/team-2.jpg" alt="Frappeverse stage"></div></div>
 <div data-type="image-slot"></div>
 <hr>
 <h2>The Frappe Ecosystem</h2>
