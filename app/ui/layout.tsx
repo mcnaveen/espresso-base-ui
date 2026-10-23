@@ -3,6 +3,8 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import {
+  Smile,
+  SquarePen,
   AlertCircle,
   AlignLeft,
   AppWindow,
@@ -44,6 +46,7 @@ import {
   List,
   LoaderCircle,
   LogOut,
+  Mail,
   MessageCircle,
   MessageSquare,
   MessagesSquare,
@@ -70,6 +73,7 @@ import {
   User,
   Workflow,
   Zap,
+  CalendarDays,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
@@ -152,6 +156,10 @@ const components = [
   { label: "Dialog", href: "/ui/dialog", icon: AppWindow },
   { label: "Divider", href: "/ui/separator", icon: Divide },
   { label: "Drawer", href: "/ui/drawer", icon: PanelBottom },
+  { label: "Editor", href: "/ui/editor", icon: SquarePen },
+  { label: "Email Composer", href: "/ui/email-composer", icon: Mail },
+  { label: "Emoji Picker", href: "/ui/emoji-picker", icon: Smile },
+  { label: "Event", href: "/ui/event", icon: CalendarDays },
   { label: "Dropdown Menu", href: "/ui/dropdown-menu", icon: ChevronDown },
   { label: "Empty", href: "/ui/empty", icon: Box },
   { label: "Field", href: "/ui/field", icon: FormInput },

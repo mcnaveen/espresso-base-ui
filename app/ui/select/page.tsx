@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  Apple,
   Banana,
   Cherry,
   Citrus,
@@ -9,6 +8,7 @@ import {
   Grape,
   ChevronsUpDown,
 } from "lucide-react"
+import { Apple } from "@/components/ui/brand-icons"
 import {
   Select,
   SelectContent,
